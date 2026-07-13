@@ -1,0 +1,18 @@
+[project]
+name = "gemini-batch-audio-cli"
+version = "0.1.0"
+description = "Small CLI for running Gemini batch experiments over audio files in GCS."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "google-genai>=1.20.0",
+  "google-cloud-storage>=2.16.0",
+  "PyYAML>=6.0.1",
+]
+
+[project.scripts]
+gemini-batch-audio = "cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"

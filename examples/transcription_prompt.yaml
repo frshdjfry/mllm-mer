@@ -1,0 +1,6 @@
+prompt_id: lyrics_transcription_v1
+kind: simple
+prompt_text: "Transcribe the lyrics from this audio exactly as they are sung. Return JSON only."
+response_schema:
+  transcription: string
+  confidence: number

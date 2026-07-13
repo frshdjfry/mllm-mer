@@ -1,0 +1,10 @@
+prompt_id: emotion_score_v1
+kind: templated
+prompt_text: "How much do you think this file induces emotional response of {{emotion}}? Use 1=very, 2=a bit, 3=none. Return JSON only."
+variables:
+  emotion:
+    - joy
+    - sadness
+
+response_schema:
+  value: integer

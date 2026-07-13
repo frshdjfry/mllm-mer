@@ -1,0 +1,6 @@
+prompt_id: transcription_v1
+kind: simple
+prompt_text: "Transcribe this audio. Return JSON only."
+response_schema:
+  transcription: string
+  confidence: number
