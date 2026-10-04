@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,8 @@ def build_requests(
     input_records: list[InputRecord],
     prompt_instances: list[PromptInstance],
     trials: int,
+    temperature: float = 1.0,
+    base_seed: int | None = None,
 ) -> list[RequestItem]:
     requests: list[RequestItem] = []
 
@@ -41,6 +44,8 @@ def build_requests(
                         variables=prompt_instance.variables,
                         prompt_text=prompt_instance.prompt_text,
                         response_schema=prompt_instance.response_schema,
+                        temperature=temperature,
+                        seed=None if base_seed is None else base_seed + trial_index,
                     )
                 )
 
@@ -82,6 +87,7 @@ def flatten_request_metadata(requests: list[RequestItem]) -> list[RequestMetadat
                         trial_index=request.trial_index,
                         variable_name=variable_name,
                         variable_value=variable_value,
+                        **run_settings(request),
                     )
                 )
         else:
@@ -98,23 +104,36 @@ def flatten_request_metadata(requests: list[RequestItem]) -> list[RequestMetadat
                     trial_index=request.trial_index,
                     variable_name="",
                     variable_value="",
+                    **run_settings(request),
                 )
             )
     return rows
 
 
+def run_settings(request: RequestItem) -> dict[str, str]:
+    return {
+        "temperature": str(request.temperature),
+        "seed": "" if request.seed is None else str(request.seed),
+        "prompt_text_hash": hashlib.sha256(request.prompt_text.encode("utf-8")).hexdigest(),
+    }
+
+
 def build_gemini_batch_request_json(request: RequestItem) -> dict[str, Any]:
     response_schema = convert_response_schema(request.response_schema)
+    generation_config: dict[str, Any] = {
+        "responseMimeType": "application/json",
+        "responseSchema": response_schema,
+        "temperature": request.temperature,
+    }
+    if request.seed is not None:
+        generation_config["seed"] = request.seed
     return {
         "custom_id": request.request_id,
         "method": "generateContent",
         "request": {
             "model": request.model,
             "contents": build_contents(request),
-            "generationConfig": {
-                "responseMimeType": "application/json",
-                "responseSchema": response_schema,
-            },
+            "generationConfig": generation_config,
         },
     }
 

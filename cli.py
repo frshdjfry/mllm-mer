@@ -21,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     submit_parser.add_argument("--model", required=True, help="Vertex model resource name")
     submit_parser.add_argument("--trials", required=True, type=int, help="Number of trials per file/prompt")
     submit_parser.add_argument("--output-uri-prefix", required=True, help="GCS prefix for batch inputs/outputs")
+    add_generation_args(submit_parser)
     add_shared_args(submit_parser)
 
     submit_text_parser = subparsers.add_parser(
@@ -32,12 +33,28 @@ def build_parser() -> argparse.ArgumentParser:
     submit_text_parser.add_argument("--model", required=True, help="Vertex model resource name")
     submit_text_parser.add_argument("--trials", required=True, type=int, help="Number of trials per row/prompt")
     submit_text_parser.add_argument("--output-uri-prefix", required=True, help="GCS prefix for batch inputs/outputs")
+    add_generation_args(submit_text_parser)
     add_shared_args(submit_text_parser)
 
     collect_parser = subparsers.add_parser("collect-results", help="Collect completed batch results.")
     add_shared_args(collect_parser)
 
     return parser
+
+
+def add_generation_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=1.0,
+        help="Sampling temperature sent with every request (default: 1.0, Gemini 3's default).",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Base seed; trial i uses seed + i. Omit to let the model choose a random seed.",
+    )
 
 
 def add_shared_args(parser: argparse.ArgumentParser) -> None:
@@ -84,6 +101,8 @@ def main() -> None:
             local_artifacts_root=artifacts_root,
             project=project,
             location=args.location,
+            temperature=args.temperature,
+            base_seed=args.seed,
         )
         print(experiment_id)
         return
@@ -99,6 +118,8 @@ def main() -> None:
             local_artifacts_root=artifacts_root,
             project=project,
             location=args.location,
+            temperature=args.temperature,
+            base_seed=args.seed,
         )
         print(experiment_id)
         return

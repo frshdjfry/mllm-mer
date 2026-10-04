@@ -104,6 +104,19 @@ python cli.py submit-experiment \
   --output-uri-prefix gs://your-output-bucket/gemini-batch-runs
 ```
 
+Generation settings (both submit commands):
+
+- `--temperature` (default `1.0`, the Gemini 3 default; Google advises not
+  lowering it for Gemini 3 models) is sent with every request.
+- `--seed N` (optional) makes sampling best-effort reproducible: trial `i`
+  uses seed `N + i`, so trials still differ from each other but a re-run
+  with the same `N` should repeat them. Google does not guarantee identical
+  output.
+
+Each parsed result row records `submitted_at`, `temperature`, `seed` and
+`prompt_text_hash` (SHA-256 of the exact prompt text sent, as 64 hex
+characters; any edit to the text changes it).
+
 Collect finished results:
 
 ```bash

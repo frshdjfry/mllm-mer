@@ -18,10 +18,9 @@ def ensure_registry_exists(path: Path) -> None:
 
 
 def append_registry_record(path: Path, record: BatchJobRecord) -> None:
-    ensure_registry_exists(path)
-    with path.open("a", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=REGISTRY_FIELDS)
-        writer.writerow(record.__dict__)
+    # Rewrite rather than append, so registries created before new columns
+    # were added get the current header instead of misaligned rows.
+    write_registry(path, read_registry(path) + [record])
 
 
 def read_registry(path: Path) -> list[BatchJobRecord]:
