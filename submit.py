@@ -29,6 +29,8 @@ def run_submit_experiment(
     local_artifacts_root: Path,
     project: str,
     location: str,
+    temperature: float = 1.0,
+    base_seed: int | None = None,
 ) -> str:
     input_records = list_audio_records(dataset_uri)
     dataset_id = dataset_id_from_gcs_uri(dataset_uri)
@@ -44,6 +46,8 @@ def run_submit_experiment(
         local_artifacts_root=local_artifacts_root,
         project=project,
         location=location,
+        temperature=temperature,
+        base_seed=base_seed,
     )
 
 
@@ -57,6 +61,8 @@ def run_submit_text_experiment(
     local_artifacts_root: Path,
     project: str,
     location: str,
+    temperature: float = 1.0,
+    base_seed: int | None = None,
 ) -> str:
     input_records = load_text_records(input_csv)
     dataset_id = dataset_id_from_csv_path(input_csv)
@@ -72,6 +78,8 @@ def run_submit_text_experiment(
         local_artifacts_root=local_artifacts_root,
         project=project,
         location=location,
+        temperature=temperature,
+        base_seed=base_seed,
     )
 
 
@@ -87,6 +95,8 @@ def run_submit_common(
     local_artifacts_root: Path,
     project: str,
     location: str,
+    temperature: float = 1.0,
+    base_seed: int | None = None,
 ) -> str:
     if trials < 1:
         raise ValueError("Trials must be at least 1.")
@@ -114,6 +124,8 @@ def run_submit_common(
         output_uri_prefix=output_uri_prefix,
         created_at=utc_now_iso(),
         prompt_instances=prompt_instances,
+        temperature=temperature,
+        base_seed=base_seed,
     )
     save_json(experiment_spec.to_dict(), experiment_dir / "experiment_spec.json")
     save_prompt_instances(prompt_instances, experiment_dir / "prompt_instances.json")
@@ -125,6 +137,8 @@ def run_submit_common(
         input_records=input_records,
         prompt_instances=prompt_instances,
         trials=trials,
+        temperature=temperature,
+        base_seed=base_seed,
     )
     local_requests_path = experiment_dir / "requests.jsonl"
     save_requests_jsonl(requests, local_requests_path)
@@ -154,6 +168,8 @@ def run_submit_common(
             model=model,
             prompt_id=prompt_spec.prompt_id,
             trials=trials,
+            temperature=str(temperature),
+            base_seed="" if base_seed is None else str(base_seed),
         ),
     )
 

@@ -63,6 +63,8 @@ class ExperimentSpec:
     output_uri_prefix: str
     created_at: str
     prompt_instances: list[PromptInstance]
+    temperature: float = 1.0
+    base_seed: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -86,6 +88,8 @@ class RequestItem:
     variables: dict[str, str]
     prompt_text: str
     response_schema: dict[str, Any]
+    temperature: float = 1.0
+    seed: int | None = None
 
 
 @dataclass
@@ -101,6 +105,9 @@ class RequestMetadataRow:
     trial_index: int
     variable_name: str
     variable_value: str
+    temperature: str = ""
+    seed: str = ""
+    prompt_text_hash: str = ""
 
 
 @dataclass
@@ -116,6 +123,8 @@ class BatchJobRecord:
     model: str
     prompt_id: str
     trials: int
+    temperature: str = ""
+    base_seed: str = ""
 
 
 @dataclass

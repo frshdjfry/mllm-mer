@@ -49,6 +49,7 @@ def run_collect_results(
             output_text,
             job_id=record.job_id,
             request_metadata_index=request_metadata_index,
+            submitted_at=record.submitted_at,
         )
         save_parsed_results_csv(parsed_rows, results_dir / "parsed_long.csv")
         save_parsed_results_csv(parsed_rows, experiment_results_root / f"{record.experiment_id}.csv")

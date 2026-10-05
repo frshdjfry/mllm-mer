@@ -8,10 +8,14 @@ from typing import Any
 from schemas import RequestMetadataRow, utc_now_iso
 
 
+RUN_SETTING_FIELDS = ["submitted_at", "temperature", "seed", "prompt_text_hash"]
+
+
 def parse_output_jsonl_text(
     output_text: str,
     job_id: str,
     request_metadata_index: dict[str, list[RequestMetadataRow]],
+    submitted_at: str = "",
 ) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     created_at = utc_now_iso()
@@ -26,7 +30,7 @@ def parse_output_jsonl_text(
         raw_response_json = json.dumps(response_json, sort_keys=True)
 
         if isinstance(response_json, dict):
-            rows.append(
+            new_rows = [
                 build_structured_result_row(
                     request_id=request_id,
                     metadata_rows=metadata_rows,
@@ -35,21 +39,41 @@ def parse_output_jsonl_text(
                     job_id=job_id,
                     created_at=created_at,
                 )
-            )
+            ]
         else:
-            rows.extend(
-                build_result_rows(
-                    request_id=request_id,
-                    metadata_rows=metadata_rows,
-                    response_key="_raw",
-                    response_value=response_json,
-                    raw_response_json=raw_response_json,
-                    job_id=job_id,
-                    created_at=created_at,
-                )
+            new_rows = build_result_rows(
+                request_id=request_id,
+                metadata_rows=metadata_rows,
+                response_key="_raw",
+                response_value=response_json,
+                raw_response_json=raw_response_json,
+                job_id=job_id,
+                created_at=created_at,
             )
 
+        for row in new_rows:
+            add_run_settings(row, metadata_rows, submitted_at)
+        rows.extend(new_rows)
+
     return rows
+
+
+def add_run_settings(
+    row: dict[str, str],
+    metadata_rows: list[RequestMetadataRow],
+    submitted_at: str,
+) -> None:
+    first = metadata_rows[0] if metadata_rows else None
+    settings = {
+        "submitted_at": submitted_at,
+        "temperature": first.temperature if first else "",
+        "seed": first.seed if first else "",
+        "prompt_text_hash": first.prompt_text_hash if first else "",
+    }
+    # Never overwrite a same-named key from the model's answer or a prompt
+    # variable; model output is stored exactly as returned.
+    for key, value in settings.items():
+        row.setdefault(key, value)
 
 
 def save_parsed_results_csv(rows: list[dict[str, str]], path: Path) -> None:
@@ -74,6 +98,7 @@ def collect_fieldnames(rows: list[dict[str, str]]) -> list[str]:
         "raw_response_json",
         "job_id",
         "created_at",
+        *RUN_SETTING_FIELDS,
     ]
     dynamic_fields: list[str] = []
     seen = set(base_fields)
@@ -102,6 +127,10 @@ def load_request_metadata_index(path: Path) -> dict[str, list[RequestMetadataRow
                 trial_index=int(row["trial_index"]),
                 variable_name=row["variable_name"],
                 variable_value=row["variable_value"],
+                # Absent in metadata written before these settings were recorded.
+                temperature=row.get("temperature", ""),
+                seed=row.get("seed", ""),
+                prompt_text_hash=row.get("prompt_text_hash", ""),
             )
             index.setdefault(metadata_row.request_id, []).append(metadata_row)
     return index
