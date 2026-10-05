@@ -114,8 +114,15 @@ Generation settings (both submit commands):
   output.
 
 Each parsed result row records `submitted_at`, `temperature`, `seed` and
-`prompt_text_hash` (SHA-256 of the exact prompt text sent, as 64 hex
-characters; any edit to the text changes it).
+`prompt_text_hash` (SHA-256 of the rendered prompt text from the prompt
+spec, as 64 hex characters; any edit to the prompt changes it). For text
+experiments it covers the prompt only, not the transcription appended to
+it. If a model answer or prompt variable uses one of these names, the
+model's value is kept and the run setting is left out of that column.
+
+The registry gains `temperature` and `base_seed` columns. An older registry
+is upgraded on the first submit with this version; after that, older
+versions of this CLI cannot read it, so keep using this version.
 
 Collect finished results:
 

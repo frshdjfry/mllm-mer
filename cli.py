@@ -87,6 +87,14 @@ def main() -> None:
     if not project:
         parser.error("--project is required, or set GOOGLE_CLOUD_PROJECT")
 
+    if args.command in {"submit-experiment", "submit-text-experiment"}:
+        if not 0.0 <= args.temperature <= 2.0:
+            parser.error("--temperature must be between 0.0 and 2.0")
+        if args.seed is not None and not (
+            -(2**31) <= args.seed and args.seed + args.trials - 1 <= 2**31 - 1
+        ):
+            parser.error("--seed plus trials must stay within the 32-bit integer range")
+
     registry_path = Path(args.registry_path)
     artifacts_root = Path(args.artifacts_root)
 

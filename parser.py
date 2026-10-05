@@ -64,10 +64,16 @@ def add_run_settings(
     submitted_at: str,
 ) -> None:
     first = metadata_rows[0] if metadata_rows else None
-    row["submitted_at"] = submitted_at
-    row["temperature"] = first.temperature if first else ""
-    row["seed"] = first.seed if first else ""
-    row["prompt_text_hash"] = first.prompt_text_hash if first else ""
+    settings = {
+        "submitted_at": submitted_at,
+        "temperature": first.temperature if first else "",
+        "seed": first.seed if first else "",
+        "prompt_text_hash": first.prompt_text_hash if first else "",
+    }
+    # Never overwrite a same-named key from the model's answer or a prompt
+    # variable; model output is stored exactly as returned.
+    for key, value in settings.items():
+        row.setdefault(key, value)
 
 
 def save_parsed_results_csv(rows: list[dict[str, str]], path: Path) -> None:
