@@ -127,6 +127,12 @@ class MusicFlamingoBackendTest(unittest.TestCase):
         self.assertEqual(sorted(r["seed"] for r in rows), ["10", "10", "11", "11"])
         self.assertTrue(read_registry(self.registry)[0].result_collected == "true")
 
+    def test_audio_placeholder_in_prompt_is_rejected(self) -> None:
+        request = {"custom_id": "x", "request": {"contents": [{"role": "user", "parts": [
+            {"file_data": {"file_uri": "/data/a1.wav"}}, {"text": "<sound>\nRate it."}]}]}}
+        with self.assertRaisesRegex(ValueError, "audio placeholder"):
+            music_flamingo.request_to_conversation(request)
+
     def test_runner_failure_is_reported_not_collected(self) -> None:
         def broken(*_):
             raise RuntimeError("CUDA out of memory")

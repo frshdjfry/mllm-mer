@@ -33,6 +33,8 @@ GenerateFn = Callable[[list[dict[str, Any]], float, "int | None"], str]
 
 FAILURE_FILENAME = "run_failed.txt"
 RUN_INFO_FILENAME = "run_info.json"
+# Music Flamingo's audio placeholder token: in prompt text it duplicates the audio slot.
+AUDIO_PLACEHOLDER = "<sound>"
 ENVIRONMENT_FILENAME = "environment.txt"
 
 
@@ -68,6 +70,11 @@ def request_to_conversation(request: dict[str, Any]) -> tuple[list[dict[str, Any
             if "file_data" in part:
                 content.append({"type": "audio", "path": part["file_data"]["file_uri"]})
             elif "text" in part:
+                if AUDIO_PLACEHOLDER in part["text"]:
+                    raise ValueError(
+                        f"Prompt text contains {AUDIO_PLACEHOLDER!r}, Music Flamingo's audio placeholder token; "
+                        "it would add a second, empty audio slot. Remove it from the prompt."
+                    )
                 content.append({"type": "text", "text": part["text"]})
     generation = body.get("generationConfig", {})
     return [{"role": "user", "content": content}], float(generation.get("temperature", 1.0)), generation.get("seed")

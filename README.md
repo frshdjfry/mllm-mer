@@ -172,6 +172,15 @@ python cli.py submit-experiment --backend music-flamingo \
 3. Collect as usual with `python cli.py collect-results`. For Slurm jobs, run
    it on the cluster, where `sacct` can see the job.
 
+What the model actually receives (checked with the pinned processor):
+- Its chat template always places the audio **before** the text, whatever
+  order the request uses, so `audio_position` has no effect for Music
+  Flamingo. Use `audio_position: before` (default) when comparing with Gemini.
+- The template adds a system message, "You are a helpful assistant.".
+- Audio becomes 25 tokens per second (750 tokens per 30 s window).
+- Prompt text must not contain `<sound>`: it is the model's audio placeholder
+  token and duplicates the audio slot. The runner rejects such prompts.
+
 How it works: `submit-experiment` writes `requests.jsonl` in the same format
 as for Gemini, then the launcher (`local_backend.py`) starts the runner
 (`music_flamingo.py`) directly or writes and `sbatch`-submits
