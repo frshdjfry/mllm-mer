@@ -1,0 +1,18 @@
+# Runs the offline tests (no GPU, Slurm, network or credentials) on every
+# push and pull request. See tests/test_formats.py for the format contracts.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install "PyYAML>=6.0.1"
+      - run: python -m unittest discover -s tests -v
