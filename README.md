@@ -141,6 +141,55 @@ python cli.py submit-text-experiment \
   --output-uri-prefix gs://your-output-bucket/gemini-batch-runs
 ```
 
+## Music Flamingo backend (local GPU or Slurm)
+
+`--backend music-flamingo` runs [NVIDIA Music Flamingo](https://huggingface.co/nvidia/music-flamingo-hf)
+with Hugging Face `transformers` on a GPU you control, using the same prompt
+specs, registry, artifacts and results columns as the Gemini backend. Audio
+is read from a local folder; nothing is uploaded. The model is
+non-commercial-research only (NVIDIA OneWay Noncommercial License).
+
+Requirements where the model runs: a GPU with roughly 40 GB of memory (the
+weights are 16.6 GB) and `pip install ".[music-flamingo]"`. The machine that
+only submits and collects does not need PyTorch.
+
+1. Copy `config/music_flamingo.cambridge-hpc.example.yaml`, fill in your
+   paths, and keep the pinned `model.revision`. Copies of the example are
+   gitignored.
+2. Submit, as a Slurm job (default) or directly on this machine's GPU:
+
+```bash
+python cli.py submit-experiment --backend music-flamingo \
+  --dataset-dir /path/to/anonymised/audio \
+  --prompt-spec examples/simple_prompt.yaml \
+  --backend-config config/my_music_flamingo.yaml \
+  --trials 3 --seed 0 \
+  --launcher slurm        # or: --launcher local
+```
+
+3. Collect as usual with `python cli.py collect-results`. For Slurm jobs, run
+   it on the cluster, where `sacct` can see the job.
+
+How it works: `submit-experiment` writes `requests.jsonl` in the same format
+as for Gemini, then the launcher (`local_backend.py`) starts the runner
+(`music_flamingo.py`) directly or writes and `sbatch`-submits
+`slurm_job.sh` from the config. The runner writes `results/raw_output.jsonl`
+in Gemini's batch output shape, plus `run_info.json` (model revision, package
+versions, GPU, timings) or `run_failed.txt` with the error. `--temperature 0`
+means greedy decoding; above 0 samples at that temperature. The model card's
+own example samples at 0.7.
+
+The registry gains a `backend` column (`vertex` for existing rows); as with
+the earlier columns, an older registry is upgraded once and older versions of
+this CLI cannot read it afterwards.
+
+Offline tests (no GPU, Slurm or network): `python -m unittest discover -s tests`.
+`tests/test_formats.py` locks every file format against golden files in
+`tests/golden/`; after an intentional format change, regenerate them with
+`UPDATE_GOLDEN=1 python -m unittest tests.test_formats` and review the diff.
+Prompt specs may set `audio_position: before` (default) or `after`, and both
+backends send the parts in that order.
+
 ## Artifacts
 
 Each experiment gets a local directory under `outputs/experiments/<experiment_id>/` with:

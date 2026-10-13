@@ -63,6 +63,36 @@ def list_audio_records(dataset_uri: str, storage_client: Any | None = None) -> l
     return records
 
 
+def dataset_id_from_local_dir(dataset_dir: str | Path) -> str:
+    return Path(dataset_dir).resolve().name
+
+
+def list_local_audio_records(dataset_dir: str | Path) -> list[InputRecord]:
+    """Audio files in a local folder (recursive), for backends that run on this machine."""
+    base = Path(dataset_dir).resolve()
+    if not base.is_dir():
+        raise ValueError(f"Not a directory: {dataset_dir}")
+    records = [
+        InputRecord(
+            source_type="audio",
+            file_id=path.stem,
+            file_uri=str(path),
+            attributes={"relative_path": str(path.relative_to(base))},
+        )
+        for path in sorted(base.rglob("*"))
+        if path.is_file() and is_audio_blob(path.name)
+    ]
+    seen: dict[str, str] = {}
+    for record in records:
+        if record.file_id in seen:
+            raise ValueError(
+                f"Two audio files share the name {record.file_id!r}: "
+                f"{seen[record.file_id]} and {record.file_uri}. File names must be unique."
+            )
+        seen[record.file_id] = record.file_uri
+    return records
+
+
 def load_text_records(csv_path: str | Path) -> list[InputRecord]:
     path = Path(csv_path)
     with path.open("r", encoding="utf-8", newline="") as handle:

@@ -1,0 +1,35 @@
+# Backend config for `submit-experiment --backend music-flamingo`.
+# Copy this file, replace <CRSID> and the paths, and pass it with
+# --backend-config. Nothing here is secret; do not add passwords or tokens.
+# Elsewhere: change the slurm block to your cluster, or use --launcher local
+# on any machine with a GPU of roughly 40 GB (the weights alone are 16.6 GB).
+
+model:
+  id: nvidia/music-flamingo-hf
+  # Pinned Hugging Face revision, so results cannot change silently.
+  revision: e560c33247f20e2f735c87ce9adebb8e53befe69
+
+generation:
+  max_new_tokens: 1024
+  dtype: bfloat16          # torch dtype for the weights
+
+runtime:
+  # Where the 16.6 GB of weights are downloaded once and reused.
+  hf_home: /rds/user/<CRSID>/hpc-work/.cache/huggingface
+
+# Used by --launcher local (defaults to the Python running the CLI).
+local:
+  python: null
+
+# Used by --launcher slurm (Cambridge CSD3 / Ampere A100 GPUs).
+slurm:
+  account: <SLURM_ACCOUNT>     # your GPU project account (ask its owner for approval)
+  partition: ampere
+  gres: gpu:1
+  time: "00:30:00"           # raise for larger experiments
+  python: /rds/user/<CRSID>/hpc-work/envs/music-flamingo/bin/python
+  extra_sbatch: []            # e.g. ["--mail-type=END", "--mail-user=<CRSID>@cam.ac.uk"]
+  setup: |
+    . /etc/profile.d/modules.sh
+    module purge
+    module load rhel8/default-amp

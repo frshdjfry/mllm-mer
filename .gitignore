@@ -3,3 +3,7 @@
 __pycache__
 outputs
 work
+
+# Personal backend configs (copies of config/*.example.yaml)
+config/*.yaml
+!config/*.example.yaml

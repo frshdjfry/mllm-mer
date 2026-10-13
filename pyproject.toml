@@ -10,6 +10,15 @@ dependencies = [
   "PyYAML>=6.0.1",
 ]
 
+[project.optional-dependencies]
+# Only needed where the music-flamingo runner itself runs (the GPU machine).
+# Versions to be pinned from a tested environment before the first real run.
+music-flamingo = [
+  "torch",
+  "transformers",
+  "accelerate",
+]
+
 [project.scripts]
 gemini-batch-audio = "cli:main"
 

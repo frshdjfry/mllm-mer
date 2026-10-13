@@ -10,17 +10,34 @@ from vertex_batch import VertexBatchClient
 def run_collect_results(
     registry_path: Path,
     local_artifacts_root: Path,
-    project: str,
+    project: str | None,
     location: str,
 ) -> list[str]:
-    client = VertexBatchClient(project=project, location=location)
     pending_records = pending_collection_records(registry_path)
+    clients: dict[str, object] = {}
+
+    def client_for(backend: str):
+        if backend not in clients:
+            if backend == "vertex":
+                if not project:
+                    raise ValueError("--project (or GOOGLE_CLOUD_PROJECT) is needed to collect Vertex jobs.")
+                clients[backend] = VertexBatchClient(project=project, location=location)
+            else:
+                from local_backend import LocalGpuClient
+
+                clients[backend] = LocalGpuClient()
+        return clients[backend]
+
     collected_experiments: list[str] = []
     experiment_results_root = local_artifacts_root.parent / "experiment_results"
     experiment_results_root.mkdir(parents=True, exist_ok=True)
 
     for record in pending_records:
-        status = client.get_job_status(record.job_id)
+        client = client_for(record.backend or "vertex")
+        if record.backend in ("", "vertex"):
+            status = client.get_job_status(record.job_id)
+        else:
+            status = client.get_job_status(record.job_id, record.output_uri_prefix)
         update_job_status(registry_path, record.job_id, status)
 
         if not client.job_is_finished(status):

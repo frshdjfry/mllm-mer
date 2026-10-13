@@ -8,7 +8,9 @@ from datasets import (
     build_input_manifest,
     dataset_id_from_csv_path,
     dataset_id_from_gcs_uri,
+    dataset_id_from_local_dir,
     list_audio_records,
+    list_local_audio_records,
     load_text_records,
     save_input_manifest,
 )
@@ -17,6 +19,8 @@ from registry import append_registry_record
 from request_builder import build_requests, save_request_metadata_csv, save_requests_jsonl
 from schemas import BatchJobRecord, ExperimentSpec, InputRecord, utc_now_iso
 from vertex_batch import VertexBatchClient
+
+BACKENDS = ("vertex", "music-flamingo")
 
 
 def run_submit_experiment(
@@ -48,6 +52,40 @@ def run_submit_experiment(
         location=location,
         temperature=temperature,
         base_seed=base_seed,
+    )
+
+
+def run_submit_local_experiment(
+    dataset_dir: str,
+    prompt_spec_path: str,
+    trials: int,
+    registry_path: Path,
+    local_artifacts_root: Path,
+    backend_config: str,
+    launcher: str,
+    temperature: float = 1.0,
+    base_seed: int | None = None,
+) -> str:
+    from local_backend import LocalGpuClient
+    from music_flamingo import load_config, model_label
+
+    input_records = list_local_audio_records(dataset_dir)
+    return run_submit_common(
+        input_source=str(Path(dataset_dir).resolve()),
+        dataset_id=dataset_id_from_local_dir(dataset_dir),
+        input_records=input_records,
+        prompt_spec_path=prompt_spec_path,
+        model=model_label(load_config(backend_config)),
+        trials=trials,
+        output_uri_prefix="",
+        registry_path=registry_path,
+        local_artifacts_root=local_artifacts_root,
+        project="",
+        location="",
+        temperature=temperature,
+        base_seed=base_seed,
+        backend="music-flamingo",
+        client=LocalGpuClient(backend_config, launcher),
     )
 
 
@@ -97,13 +135,16 @@ def run_submit_common(
     location: str,
     temperature: float = 1.0,
     base_seed: int | None = None,
+    backend: str = "vertex",
+    client=None,
 ) -> str:
     if trials < 1:
         raise ValueError("Trials must be at least 1.")
     if not input_records:
         raise ValueError(f"No input records found for {input_source}")
 
-    client = VertexBatchClient(project=project, location=location)
+    if client is None:
+        client = VertexBatchClient(project=project, location=location)
     prompt_spec = load_prompt_spec(prompt_spec_path)
     prompt_instances = expand_prompt_instances(prompt_spec)
     experiment_id = build_experiment_id(dataset_id=dataset_id, prompt_id=prompt_spec.prompt_id)
@@ -144,14 +185,20 @@ def run_submit_common(
     save_requests_jsonl(requests, local_requests_path)
     save_request_metadata_csv(requests, experiment_dir / "request_metadata.csv")
 
-    remote_requests_uri = join_gcs_path(output_uri_prefix, experiment_id, "requests.jsonl")
+    if backend == "vertex":
+        remote_requests_uri = join_gcs_path(output_uri_prefix, experiment_id, "requests.jsonl")
+        job_output_prefix = join_gcs_path(output_uri_prefix, experiment_id, "batch_output")
+    else:
+        # Local backends read and write next to the experiment's artifacts.
+        remote_requests_uri = str(local_requests_path.resolve())
+        job_output_prefix = str(results_dir.resolve())
     client.upload_file(local_requests_path, remote_requests_uri)
 
     job = client.submit_batch_job(
         display_name=experiment_id,
         model=model,
         input_jsonl_uri=remote_requests_uri,
-        output_uri_prefix=join_gcs_path(output_uri_prefix, experiment_id, "batch_output"),
+        output_uri_prefix=job_output_prefix,
     )
 
     append_registry_record(
@@ -170,6 +217,7 @@ def run_submit_common(
             trials=trials,
             temperature=str(temperature),
             base_seed="" if base_seed is None else str(base_seed),
+            backend=backend,
         ),
     )
 
