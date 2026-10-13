@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
@@ -89,7 +90,8 @@ class MusicFlamingoBackendTest(unittest.TestCase):
         self.assertEqual((temperature, seed), (0.7, 3))
 
     def test_end_to_end_local_launcher(self) -> None:
-        with mock.patch.object(local_backend.subprocess, "run", side_effect=self.fake_local_run):
+        fake_subprocess = types.SimpleNamespace(run=self.fake_local_run, CompletedProcess=subprocess.CompletedProcess)
+        with mock.patch.object(local_backend, "subprocess", fake_subprocess):
             experiment_id = run_submit_local_experiment(
                 dataset_dir=str(self.audio), prompt_spec_path=str(self.prompt), trials=2,
                 registry_path=self.registry, local_artifacts_root=self.artifacts,
@@ -99,8 +101,19 @@ class MusicFlamingoBackendTest(unittest.TestCase):
         self.assertEqual(record.backend, "music-flamingo")
         self.assertEqual(record.model, "nvidia/music-flamingo-hf@e560c33247f20e2f735c87ce9adebb8e53befe69")
         self.assertEqual(record.status, "JOB_STATE_SUCCEEDED")
-        info = json.loads((self.artifacts / experiment_id / "results" / "run_info.json").read_text())
+        experiment_dir = self.artifacts / experiment_id
+        info = json.loads((experiment_dir / "results" / "run_info.json").read_text())
         self.assertEqual(info["requests"], 4)
+        self.assertEqual(len(info["code_version"]["commit"]), 40)  # which code produced the run
+        self.assertIn("PyYAML", (experiment_dir / "results" / "environment.txt").read_text())
+        spec = json.loads((experiment_dir / "experiment_spec.json").read_text())
+        self.assertEqual(spec["backend"], "music-flamingo")
+        self.assertEqual(spec["code_version"]["commit"], info["code_version"]["commit"])
+        manifest = json.loads((experiment_dir / "input_manifest.json").read_text())
+        import hashlib
+        for record in manifest["records"]:  # which exact audio was used
+            expected = hashlib.sha256(Path(record["file_uri"]).read_bytes()).hexdigest()
+            self.assertEqual(record["attributes"]["sha256"], expected)
 
         collected = run_collect_results(self.registry, self.artifacts, project=None, location="global")
         self.assertEqual(collected, [experiment_id])
@@ -131,11 +144,11 @@ class MusicFlamingoBackendTest(unittest.TestCase):
     def test_slurm_launcher_script_and_states(self) -> None:
         client = local_backend.LocalGpuClient(self.config, launcher="slurm")
         out = self.tmp / "exp" / "results"
-        with mock.patch.object(local_backend.subprocess, "run",
-                               return_value=subprocess.CompletedProcess([], 0, stdout="4242;cluster\n")) as sb:
+        sbatch = mock.Mock(return_value=subprocess.CompletedProcess([], 0, stdout="4242;cluster\n"))
+        with mock.patch.object(local_backend, "subprocess", types.SimpleNamespace(run=sbatch)):
             job = client.submit_batch_job("exp", "m", str(self.tmp / "exp" / "requests.jsonl"), str(out))
         self.assertEqual(job.job_id, "slurm:4242")
-        self.assertEqual(sb.call_args.args[0][:2], ["sbatch", "--parsable"])
+        self.assertEqual(sbatch.call_args.args[0][:2], ["sbatch", "--parsable"])
         script = (self.tmp / "exp" / "slurm_job.sh").read_text()
         for expected in ("#SBATCH --account test-account", "#SBATCH -p ampere", "#SBATCH --gres=gpu:1",
                          "module load rhel8/default-amp", "export HF_HOME=/rds/user/abc123/",

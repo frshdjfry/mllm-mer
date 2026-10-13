@@ -14,15 +14,18 @@ The launcher (local_backend.py) normally starts this, directly or via Slurm.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import platform
+import subprocess
 import sys
 import traceback
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from provenance import code_version
 from schemas import utc_now_iso
 
 # (conversation, temperature, seed) -> generated text
@@ -30,6 +33,7 @@ GenerateFn = Callable[[list[dict[str, Any]], float, "int | None"], str]
 
 FAILURE_FILENAME = "run_failed.txt"
 RUN_INFO_FILENAME = "run_info.json"
+ENVIRONMENT_FILENAME = "environment.txt"
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -90,7 +94,9 @@ def run(
         "host": platform.node(),
         "python": sys.version.split()[0],
         "slurm_job_id": os.environ.get("SLURM_JOB_ID", ""),
+        "code_version": code_version(),
     }
+    write_environment(output_path.parent / ENVIRONMENT_FILENAME)
     try:
         requests = read_requests(requests_path)
         if generate is None:
@@ -114,6 +120,12 @@ def run(
         (output_path.parent / RUN_INFO_FILENAME).write_text(json.dumps(info, indent=2), encoding="utf-8")
 
 
+def write_environment(path: Path) -> None:
+    """Full package list of the Python running the model (a lockfile for this run)."""
+    result = subprocess.run([sys.executable, "-m", "pip", "freeze"], capture_output=True, text=True)
+    path.write_text(result.stdout if result.returncode == 0 else f"pip freeze failed: {result.stderr}", encoding="utf-8")
+
+
 def build_hf_generator(config: dict[str, Any]) -> tuple[GenerateFn, dict[str, Any]]:
     """Load the pinned model once and return a generate function plus environment info."""
     import torch
@@ -128,6 +140,7 @@ def build_hf_generator(config: dict[str, Any]) -> tuple[GenerateFn, dict[str, An
         model_cfg["id"], revision=model_cfg["revision"], device_map="auto", torch_dtype=dtype
     )
     max_new_tokens = int(generation_cfg.get("max_new_tokens", 1024))
+    effective: dict[str, Any] = {}
 
     def generate(conversation: list[dict[str, Any]], temperature: float, seed: int | None) -> str:
         inputs = processor.apply_chat_template(
@@ -140,6 +153,12 @@ def build_hf_generator(config: dict[str, Any]) -> tuple[GenerateFn, dict[str, An
             kwargs.update(do_sample=False)
         if seed is not None:
             torch.manual_seed(seed)
+        key = f"temperature={temperature}"
+        if key not in effective:
+            # Everything generate() will use, including library defaults we did not set.
+            config = copy.deepcopy(model.generation_config)
+            config.update(**kwargs)
+            effective[key] = config.to_dict()
         outputs = model.generate(**inputs, **kwargs)
         return processor.batch_decode(outputs[:, inputs.input_ids.shape[1]:], skip_special_tokens=True)[0]
 
@@ -150,6 +169,7 @@ def build_hf_generator(config: dict[str, Any]) -> tuple[GenerateFn, dict[str, An
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none",
         "dtype": str(dtype),
         "max_new_tokens": max_new_tokens,
+        "effective_generation_config": effective,  # filled during the run
     }
     return generate, environment
 

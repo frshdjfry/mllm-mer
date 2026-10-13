@@ -7,6 +7,7 @@ from typing import Any
 from typing import Iterable
 from urllib.parse import urlparse
 
+from provenance import sha256_file
 from schemas import InputManifest, InputRecord, utc_now_iso
 
 _AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg"}
@@ -55,7 +56,13 @@ def list_audio_records(dataset_uri: str, storage_client: Any | None = None) -> l
                 source_type="audio",
                 file_id=file_id_from_uri(uri),
                 file_uri=uri,
-                attributes={"bucket": bucket_name, "blob_path": blob.name},
+                attributes={
+                    "bucket": bucket_name,
+                    "blob_path": blob.name,
+                    # GCS's own checksum and version, to prove which file was used.
+                    "md5_base64": getattr(blob, "md5_hash", "") or "",
+                    "generation": str(getattr(blob, "generation", "") or ""),
+                },
             )
         )
 
@@ -77,7 +84,7 @@ def list_local_audio_records(dataset_dir: str | Path) -> list[InputRecord]:
             source_type="audio",
             file_id=path.stem,
             file_uri=str(path),
-            attributes={"relative_path": str(path.relative_to(base))},
+            attributes={"relative_path": str(path.relative_to(base)), "sha256": sha256_file(path)},
         )
         for path in sorted(base.rglob("*"))
         if path.is_file() and is_audio_blob(path.name)

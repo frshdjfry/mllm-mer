@@ -14,6 +14,7 @@ from datasets import (
     load_text_records,
     save_input_manifest,
 )
+from provenance import code_version
 from prompts import expand_prompt_instances, load_prompt_spec, save_prompt_instances
 from registry import append_registry_record
 from request_builder import build_requests, save_request_metadata_csv, save_requests_jsonl
@@ -167,6 +168,13 @@ def run_submit_common(
         prompt_instances=prompt_instances,
         temperature=temperature,
         base_seed=base_seed,
+        backend=backend,
+        code_version=code_version(),
+        unset_generation_settings=(
+            "top_p, top_k, max_output_tokens: Vertex/Gemini defaults (not sent); see modelVersion in raw output"
+            if backend == "vertex"
+            else "see results/run_info.json (effective_generation_config)"
+        ),
     )
     save_json(experiment_spec.to_dict(), experiment_dir / "experiment_spec.json")
     save_prompt_instances(prompt_instances, experiment_dir / "prompt_instances.json")

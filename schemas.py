@@ -67,6 +67,9 @@ class ExperimentSpec:
     prompt_instances: list[PromptInstance]
     temperature: float = 1.0
     base_seed: int | None = None
+    backend: str = "vertex"
+    code_version: dict[str, Any] = field(default_factory=dict)
+    unset_generation_settings: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
