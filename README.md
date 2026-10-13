@@ -150,7 +150,9 @@ is read from a local folder; nothing is uploaded. The model is
 non-commercial-research only (NVIDIA OneWay Noncommercial License).
 
 Requirements where the model runs: a GPU with roughly 40 GB of memory (the
-weights are 16.6 GB) and `pip install ".[music-flamingo]"`. The machine that
+weights are 16.6 GB) and the pinned environment from
+`requirements-music-flamingo.txt` (`python -m pip install -r requirements-music-flamingo.txt`;
+`transformers` is a development commit, as Music Flamingo needs unreleased code). The machine that
 only submits and collects does not need PyTorch.
 
 1. Copy `config/music_flamingo.cambridge-hpc.example.yaml`, fill in your
