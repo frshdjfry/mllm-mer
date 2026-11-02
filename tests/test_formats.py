@@ -49,8 +49,12 @@ METADATA_COLUMNS = [
 RESULT_BASE_COLUMNS = [
     "experiment_id", "dataset_id", "file_id", "file_uri", "model", "prompt_id", "prompt_instance_id",
     "trial_index", "raw_response_json", "job_id", "created_at", "submitted_at", "temperature", "seed",
-    "prompt_text_hash",
+    "prompt_text_hash", "backend", "model_served", "settings_source", "code_commit", "hardware",
 ]
+FLAMINGO_RUN_COLUMNS = {
+    "backend": "music-flamingo", "model_served": "example-model@abc123",
+    "settings_source": "effective; see results/run_info.json", "code_commit": "0" * 40, "hardware": "NVIDIA A100",
+}
 
 SIMPLE_PROMPT = """prompt_id: golden_simple_v1
 kind: simple
@@ -138,7 +142,8 @@ class FormatTest(unittest.TestCase):
         output = "".join(json.dumps(music_flamingo.output_line(r.request_id, a)) + "\n" for r, a in zip(requests, answers))
         index = result_parser.load_request_metadata_index(self.tmp / "request_metadata.csv")
         with mock.patch.object(result_parser, "utc_now_iso", return_value=FIXED_TIME):
-            rows = result_parser.parse_output_jsonl_text(output, job_id="job-1", request_metadata_index=index, submitted_at=FIXED_TIME)
+            rows = result_parser.parse_output_jsonl_text(output, job_id="job-1", request_metadata_index=index,
+                                                         submitted_at=FIXED_TIME, run_columns=FLAMINGO_RUN_COLUMNS)
         result_parser.save_parsed_results_csv(rows, self.tmp / "parsed.csv")
         check_golden(self, "simple_parsed_results.csv", (self.tmp / "parsed.csv").read_text())
         self.assertEqual(header(self.tmp / "parsed.csv")[: len(RESULT_BASE_COLUMNS)], RESULT_BASE_COLUMNS)
@@ -174,6 +179,20 @@ class FormatTest(unittest.TestCase):
         # Pre-change metadata: run settings blank, model's own file_id kept as returned.
         self.assertEqual(by_uri["a606d6d5e11290be"]["temperature"], "")
         self.assertEqual(by_uri["a606d6d5e11290be"]["file_id"], "audio_file")
+
+    def test_old_gemini_rows_get_explicit_markers_and_served_version(self) -> None:
+        index = result_parser.load_request_metadata_index(FIXTURES / "gemini_request_metadata_v1.csv")
+        run_columns = {"backend": "vertex", "model_served": "", "settings_source": "requested",
+                       "code_commit": result_parser.NOT_RECORDED, "hardware": "google_hosted"}
+        rows = result_parser.parse_output_jsonl_text(
+            (FIXTURES / "gemini_raw_output_v1.jsonl").read_text(), job_id="j", request_metadata_index=index,
+            run_columns=run_columns,
+        )
+        for row in rows:
+            # Served version comes from each line's modelVersion; unsent settings are named, not blank.
+            self.assertEqual((row["model_served"], row["temperature"], row["seed"]),
+                             ("gemini-3.8-flash", "vertex_default", "not_set"))
+            self.assertEqual((row["backend"], row["code_commit"]), ("vertex", "not_recorded"))
 
     # 6: both backends produce output the parser treats the same ----------------
     def test_music_flamingo_output_matches_gemini_shape(self) -> None:

@@ -9,6 +9,10 @@ from schemas import RequestMetadataRow, utc_now_iso
 
 
 RUN_SETTING_FIELDS = ["submitted_at", "temperature", "seed", "prompt_text_hash"]
+# The same columns for every backend, so Gemini and Music Flamingo rows can be
+# compared directly. Unknown values get an explicit marker, never a blank.
+RUN_PROVENANCE_FIELDS = ["backend", "model_served", "settings_source", "code_commit", "hardware"]
+NOT_RECORDED = "not_recorded"
 
 
 def parse_output_jsonl_text(
@@ -16,6 +20,7 @@ def parse_output_jsonl_text(
     job_id: str,
     request_metadata_index: dict[str, list[RequestMetadataRow]],
     submitted_at: str = "",
+    run_columns: dict[str, str] | None = None,
 ) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     created_at = utc_now_iso()
@@ -53,9 +58,26 @@ def parse_output_jsonl_text(
 
         for row in new_rows:
             add_run_settings(row, metadata_rows, submitted_at)
+            if run_columns is not None:
+                add_run_provenance(row, payload, run_columns)
         rows.extend(new_rows)
 
     return rows
+
+
+def add_run_provenance(row: dict[str, str], payload: dict[str, Any], run_columns: dict[str, str]) -> None:
+    # Gemini reports the version that actually answered on every output line;
+    # otherwise fall back to the run-level value (Music Flamingo's pinned revision).
+    response = payload.get("response")
+    served = response.get("modelVersion") if isinstance(response, dict) else None
+    values = {**run_columns, "model_served": served or run_columns.get("model_served") or NOT_RECORDED}
+    for key, value in values.items():
+        row.setdefault(key, value)
+    # Settings that were never sent: say so, instead of leaving a blank.
+    if row.get("temperature") == "" and run_columns.get("backend") == "vertex":
+        row["temperature"] = "vertex_default"
+    if row.get("seed") == "":
+        row["seed"] = "not_set"
 
 
 def add_run_settings(
@@ -99,6 +121,7 @@ def collect_fieldnames(rows: list[dict[str, str]]) -> list[str]:
         "job_id",
         "created_at",
         *RUN_SETTING_FIELDS,
+        *RUN_PROVENANCE_FIELDS,
     ]
     dynamic_fields: list[str] = []
     seen = set(base_fields)

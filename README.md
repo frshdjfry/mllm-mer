@@ -120,6 +120,22 @@ experiments it covers the prompt only, not the transcription appended to
 it. If a model answer or prompt variable uses one of these names, the
 model's value is kept and the run setting is left out of that column.
 
+Every row also has the same provenance columns for both backends, so
+Gemini and Music Flamingo results can be compared in one table:
+
+| Column | Gemini (`vertex`) | Music Flamingo |
+|---|---|---|
+| `backend` | `vertex` | `music-flamingo` |
+| `model_served` | `modelVersion` from that response line | pinned `id@revision` |
+| `settings_source` | `requested; unsent settings are Vertex defaults` | `effective; see results/run_info.json` |
+| `code_commit` | commit at submit time | commit the runner ran |
+| `hardware` | `google_hosted` | GPU name (`cpu` without one) |
+
+Unknown values are named, never blank: `not_recorded` (e.g. runs from
+before code commits were recorded), `vertex_default` for a temperature that
+was never sent to Gemini, `not_set` for a seed that was never sent.
+`code_commit` ends in `+uncommitted` if the code had uncommitted changes.
+
 The registry gains `temperature` and `base_seed` columns. An older registry
 is upgraded on the first submit with this version; after that, older
 versions of this CLI cannot read it, so keep using this version.
@@ -128,6 +144,14 @@ Collect finished results:
 
 ```bash
 python cli.py collect-results
+```
+
+After the results table format changes, rebuild the tables of already
+collected jobs from their saved `results/raw_output.jsonl` (the raw output is
+only read, never changed; `created_at` becomes the rebuild time):
+
+```bash
+python cli.py rebuild-results
 ```
 
 Submit a text-only experiment:

@@ -4,7 +4,7 @@ import argparse
 import os
 from pathlib import Path
 
-from collect import run_collect_results
+from collect import run_collect_results, run_rebuild_results
 from submit import BACKENDS, run_submit_experiment, run_submit_local_experiment, run_submit_text_experiment
 
 DEFAULT_REGISTRY_PATH = Path("outputs/registry/experiments_registry.csv")
@@ -48,6 +48,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     collect_parser = subparsers.add_parser("collect-results", help="Collect completed batch results.")
     add_shared_args(collect_parser)
+
+    rebuild_parser = subparsers.add_parser(
+        "rebuild-results",
+        help="Rebuild results tables of collected jobs from their saved raw output (raw output is not changed).",
+    )
+    add_shared_args(rebuild_parser)
 
     return parser
 
@@ -183,6 +189,13 @@ def main() -> None:
                 print(experiment_id)
         else:
             print("No completed jobs were collected.")
+        return
+
+    if args.command == "rebuild-results":
+        rebuilt = run_rebuild_results(registry_path=registry_path, local_artifacts_root=artifacts_root)
+        for experiment_id in rebuilt:
+            print(experiment_id)
+        print(f"Rebuilt {len(rebuilt)} results tables.")
         return
 
     parser.error(f"Unsupported command: {args.command}")

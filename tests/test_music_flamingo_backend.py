@@ -24,7 +24,7 @@ sys.path.insert(0, str(REPO))
 import cli  # noqa: E402
 import local_backend  # noqa: E402
 import music_flamingo  # noqa: E402
-from collect import run_collect_results  # noqa: E402
+from collect import run_collect_results, run_rebuild_results  # noqa: E402
 from datasets import list_local_audio_records  # noqa: E402
 from registry import read_registry  # noqa: E402
 from submit import run_submit_local_experiment  # noqa: E402
@@ -124,7 +124,21 @@ class MusicFlamingoBackendTest(unittest.TestCase):
             self.assertEqual(Path(row["file_uri"]).name, row["heard"])  # right audio went with right request
             self.assertEqual(row["seed"], row["seed_seen"])  # seed reached the model
             self.assertEqual((row["joy"], row["temperature"]), ("70", "1.0"))
+            self.assertEqual((row["backend"], row["model_served"]), ("music-flamingo", info["model"]))
+            self.assertEqual(row["code_commit"].split("+")[0], info["code_version"]["commit"])
+            self.assertEqual(row["hardware"], "not_recorded")  # the fake generator reports no GPU
         self.assertEqual(sorted(r["seed"] for r in rows), ["10", "10", "11", "11"])
+
+        # Rebuilding gives the same table and leaves the raw output untouched.
+        raw_output = experiment_dir / "results" / "raw_output.jsonl"
+        raw_before = raw_output.read_bytes()
+        self.assertEqual(run_rebuild_results(self.registry, self.artifacts), [experiment_id])
+        self.assertEqual(raw_output.read_bytes(), raw_before)
+        with open(self.artifacts.parent / "experiment_results" / f"{experiment_id}.csv", encoding="utf-8") as handle:
+            rebuilt = list(csv.DictReader(handle))
+        ignore = {"created_at"}
+        self.assertEqual([{k: v for k, v in r.items() if k not in ignore} for r in rebuilt],
+                         [{k: v for k, v in r.items() if k not in ignore} for r in rows])
         self.assertTrue(read_registry(self.registry)[0].result_collected == "true")
 
     def test_audio_placeholder_in_prompt_is_rejected(self) -> None:
