@@ -25,7 +25,7 @@ local:
 slurm:
   account: <SLURM_ACCOUNT>     # your GPU project account (ask its owner for approval)
   partition: ampere
-  gres: gpu:1
+  gres: gpu:1                # set to null for a CPU-only job (e.g. partition: icelake)
   time: "00:30:00"           # raise for larger experiments
   python: /rds/user/<CRSID>/hpc-work/envs/music-flamingo/bin/python
   extra_sbatch: []            # e.g. ["--mail-type=END", "--mail-user=<CRSID>@cam.ac.uk"]

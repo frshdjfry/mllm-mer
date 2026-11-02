@@ -133,13 +133,15 @@ class LocalGpuClient:
             if not slurm.get(key):
                 raise ValueError(f"Backend config is missing slurm.{key}")
         log_path = (output_dir.parent / "slurm-%j.out").resolve()
+        # A missing gres means one GPU; an explicit null/empty gres means a CPU-only job.
+        gres = slurm.get("gres", "gpu:1")
         lines = [
             "#!/bin/bash",
             f"#SBATCH -J {job_name[:64]}",
             f"#SBATCH --account {slurm['account']}",
             f"#SBATCH -p {slurm['partition']}",
             "#SBATCH --nodes 1",
-            f"#SBATCH --gres={slurm.get('gres', 'gpu:1')}",
+            *([f"#SBATCH --gres={gres}"] if gres else []),
             f"#SBATCH --time={slurm['time']}",
             f"#SBATCH --output={log_path}",
             *[f"#SBATCH {option}" for option in slurm.get("extra_sbatch", [])],

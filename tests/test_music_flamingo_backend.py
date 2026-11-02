@@ -171,6 +171,13 @@ class MusicFlamingoBackendTest(unittest.TestCase):
         with mock.patch.object(local_backend.LocalGpuClient, "_sacct_state", return_value="JOB_STATE_SUCCEEDED"):
             self.assertEqual(client.get_job_status("slurm:4242", str(out)), "JOB_STATE_RUNNING")
 
+    def test_slurm_script_without_gres_for_cpu_jobs(self) -> None:
+        self.config.write_text(self.config.read_text().replace("gres: gpu:1", "gres: null"))
+        client = local_backend.LocalGpuClient(self.config, launcher="slurm")
+        script = client.slurm_script("cpu-test", self.tmp / "requests.jsonl", self.tmp / "results")
+        self.assertNotIn("--gres", script)
+        self.assertIn("#SBATCH --account test-account", script)
+
     def test_cli_requires_backend_specific_flags(self) -> None:
         cases = [
             (["submit-experiment", "--backend", "music-flamingo", "--prompt-spec", "p", "--trials", "1"],
