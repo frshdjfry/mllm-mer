@@ -67,6 +67,7 @@ class ExperimentSpec:
     prompt_instances: list[PromptInstance]
     temperature: float = 1.0
     base_seed: int | None = None
+    top_p: float | None = None
     backend: str = "vertex"
     code_version: dict[str, Any] = field(default_factory=dict)
     unset_generation_settings: str = ""
@@ -96,6 +97,7 @@ class RequestItem:
     temperature: float = 1.0
     seed: int | None = None
     audio_position: str = "before"
+    top_p: float | None = None
 
 
 @dataclass
@@ -114,6 +116,7 @@ class RequestMetadataRow:
     temperature: str = ""
     seed: str = ""
     prompt_text_hash: str = ""
+    top_p: str = ""
 
 
 @dataclass

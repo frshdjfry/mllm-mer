@@ -71,6 +71,13 @@ def add_generation_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Base seed; trial i uses seed + i. Omit to let the model choose a random seed.",
     )
+    parser.add_argument(
+        "--top-p",
+        type=float,
+        default=None,
+        help="Nucleus sampling: sample only from the most likely tokens whose probabilities add up to "
+        "this value. Omit to use the model's default (not sent).",
+    )
 
 
 def add_shared_args(parser: argparse.ArgumentParser) -> None:
@@ -120,6 +127,10 @@ def main() -> None:
     if args.command in {"submit-experiment", "submit-text-experiment"}:
         if not 0.0 <= args.temperature <= 2.0:
             parser.error("--temperature must be between 0.0 and 2.0")
+        if args.top_p is not None and not 0.0 < args.top_p <= 1.0:
+            parser.error("--top-p must be greater than 0.0 and at most 1.0")
+        if args.top_p is not None and args.temperature == 0.0:
+            parser.error("--top-p has no effect with --temperature 0 (greedy decoding); omit it")
         if args.seed is not None and not (
             -(2**31) <= args.seed and args.seed + args.trials - 1 <= 2**31 - 1
         ):
@@ -139,6 +150,7 @@ def main() -> None:
             launcher=args.launcher,
             temperature=args.temperature,
             base_seed=args.seed,
+            top_p=args.top_p,
         )
         print(experiment_id)
         return
@@ -156,6 +168,7 @@ def main() -> None:
             location=args.location,
             temperature=args.temperature,
             base_seed=args.seed,
+            top_p=args.top_p,
         )
         print(experiment_id)
         return
@@ -173,6 +186,7 @@ def main() -> None:
             location=args.location,
             temperature=args.temperature,
             base_seed=args.seed,
+            top_p=args.top_p,
         )
         print(experiment_id)
         return

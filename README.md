@@ -108,12 +108,16 @@ Generation settings (both submit commands):
 
 - `--temperature` (default `1.0`, the Gemini 3 default; Google advises not
   lowering it for Gemini 3 models) is sent with every request.
+- `--top-p P` (optional, 0 < P <= 1) samples only from the most likely
+  tokens whose probabilities add up to P (nucleus sampling). Omitted, it is
+  not sent and the model's own default applies. Not allowed with
+  `--temperature 0`, which is greedy decoding (always the most likely token).
 - `--seed N` (optional) makes sampling best-effort reproducible: trial `i`
   uses seed `N + i`, so trials still differ from each other but a re-run
   with the same `N` should repeat them. Google does not guarantee identical
   output.
 
-Each parsed result row records `submitted_at`, `temperature`, `seed` and
+Each parsed result row records `submitted_at`, `temperature`, `top_p`, `seed` and
 `prompt_text_hash` (SHA-256 of the rendered prompt text from the prompt
 spec, as 64 hex characters; any edit to the prompt changes it). For text
 experiments it covers the prompt only, not the transcription appended to
@@ -133,7 +137,8 @@ Gemini and Music Flamingo results can be compared in one table:
 
 Unknown values are named, never blank: `not_recorded` (e.g. runs from
 before code commits were recorded), `vertex_default` for a temperature that
-was never sent to Gemini, `not_set` for a seed that was never sent.
+was never sent to Gemini, `not_set` for a seed that was never sent, and
+`vertex_default` / `model_default` for a top_p that was never sent.
 `code_commit` ends in `+uncommitted` if the code had uncommitted changes.
 
 `schema_keys` says whether the answer used the prompt's `response_schema`
@@ -224,8 +229,9 @@ as for Gemini, then the launcher (`local_backend.py`) starts the runner
 `slurm_job.sh` from the config. The runner writes `results/raw_output.jsonl`
 in Gemini's batch output shape, plus `run_info.json` (model revision, package
 versions, GPU, timings) or `run_failed.txt` with the error. `--temperature 0`
-means greedy decoding; above 0 samples at that temperature. The model card's
-own example samples at 0.7.
+means greedy decoding (the model's own default: its generation config sets no
+sampling); above 0 samples at that temperature, with `--top-p` if given. The
+model card's sampling example uses temperature 0.7 and top_p 0.9.
 
 The registry gains a `backend` column (`vertex` for existing rows); as with
 the earlier columns, an older registry is upgraded once and older versions of

@@ -36,6 +36,7 @@ def run_submit_experiment(
     location: str,
     temperature: float = 1.0,
     base_seed: int | None = None,
+    top_p: float | None = None,
 ) -> str:
     input_records = list_audio_records(dataset_uri)
     dataset_id = dataset_id_from_gcs_uri(dataset_uri)
@@ -53,6 +54,7 @@ def run_submit_experiment(
         location=location,
         temperature=temperature,
         base_seed=base_seed,
+        top_p=top_p,
     )
 
 
@@ -66,6 +68,7 @@ def run_submit_local_experiment(
     launcher: str,
     temperature: float = 1.0,
     base_seed: int | None = None,
+    top_p: float | None = None,
 ) -> str:
     from local_backend import LocalGpuClient
     from music_flamingo import load_config, model_label
@@ -85,6 +88,7 @@ def run_submit_local_experiment(
         location="",
         temperature=temperature,
         base_seed=base_seed,
+        top_p=top_p,
         backend="music-flamingo",
         client=LocalGpuClient(backend_config, launcher),
     )
@@ -102,6 +106,7 @@ def run_submit_text_experiment(
     location: str,
     temperature: float = 1.0,
     base_seed: int | None = None,
+    top_p: float | None = None,
 ) -> str:
     input_records = load_text_records(input_csv)
     dataset_id = dataset_id_from_csv_path(input_csv)
@@ -119,6 +124,7 @@ def run_submit_text_experiment(
         location=location,
         temperature=temperature,
         base_seed=base_seed,
+        top_p=top_p,
     )
 
 
@@ -136,6 +142,7 @@ def run_submit_common(
     location: str,
     temperature: float = 1.0,
     base_seed: int | None = None,
+    top_p: float | None = None,
     backend: str = "vertex",
     client=None,
 ) -> str:
@@ -168,10 +175,12 @@ def run_submit_common(
         prompt_instances=prompt_instances,
         temperature=temperature,
         base_seed=base_seed,
+        top_p=top_p,
         backend=backend,
         code_version=code_version(),
         unset_generation_settings=(
-            "top_p, top_k, max_output_tokens: Vertex/Gemini defaults (not sent); see modelVersion in raw output"
+            ("top_p, " if top_p is None else "")
+            + "top_k, max_output_tokens: Vertex/Gemini defaults (not sent); see modelVersion in raw output"
             if backend == "vertex"
             else "see results/run_info.json (effective_generation_config)"
         ),
@@ -188,6 +197,7 @@ def run_submit_common(
         trials=trials,
         temperature=temperature,
         base_seed=base_seed,
+        top_p=top_p,
     )
     local_requests_path = experiment_dir / "requests.jsonl"
     save_requests_jsonl(requests, local_requests_path)

@@ -41,11 +41,11 @@ response_schema:
 """
 
 
-def fake_generate(conversation, temperature, seed):
+def fake_generate(conversation, temperature, seed, top_p):
     """Stands in for the model: echoes what it was given, as JSON ("Joy": a key not in the schema's form)."""
     content = conversation[0]["content"]
     audio = [part["path"] for part in content if part["type"] == "audio"]
-    return json.dumps({"Joy": 70, "sadness": 5, "heard": Path(audio[0]).name, "seed_seen": seed})
+    return json.dumps({"Joy": 70, "sadness": 5, "heard": Path(audio[0]).name, "seed_seen": seed, "top_p_seen": top_p})
 
 
 class MusicFlamingoBackendTest(unittest.TestCase):
@@ -84,10 +84,10 @@ class MusicFlamingoBackendTest(unittest.TestCase):
     def test_request_to_conversation_keeps_order(self) -> None:
         request = {"custom_id": "x", "request": {"contents": [{"role": "user", "parts": [
             {"file_data": {"mime_type": "audio/wav", "file_uri": "/data/a1.wav"}}, {"text": "Rate it."}]}],
-            "generationConfig": {"temperature": 0.7, "seed": 3}}}
-        conversation, temperature, seed = music_flamingo.request_to_conversation(request)
+            "generationConfig": {"temperature": 0.7, "seed": 3, "topP": 0.9}}}
+        conversation, temperature, seed, top_p = music_flamingo.request_to_conversation(request)
         self.assertEqual([p["type"] for p in conversation[0]["content"]], ["audio", "text"])  # order kept
-        self.assertEqual((temperature, seed), (0.7, 3))
+        self.assertEqual((temperature, seed, top_p), (0.7, 3, 0.9))
 
     def test_end_to_end_local_launcher(self) -> None:
         fake_subprocess = types.SimpleNamespace(run=self.fake_local_run, CompletedProcess=subprocess.CompletedProcess)
@@ -95,7 +95,7 @@ class MusicFlamingoBackendTest(unittest.TestCase):
             experiment_id = run_submit_local_experiment(
                 dataset_dir=str(self.audio), prompt_spec_path=str(self.prompt), trials=2,
                 registry_path=self.registry, local_artifacts_root=self.artifacts,
-                backend_config=str(self.config), launcher="local", temperature=1.0, base_seed=10,
+                backend_config=str(self.config), launcher="local", temperature=1.0, base_seed=10, top_p=0.9,
             )
         record = read_registry(self.registry)[0]
         self.assertEqual(record.backend, "music-flamingo")
@@ -123,12 +123,13 @@ class MusicFlamingoBackendTest(unittest.TestCase):
         for row in rows:
             self.assertEqual(Path(row["file_uri"]).name, row["heard"])  # right audio went with right request
             self.assertEqual(row["seed"], row["seed_seen"])  # seed reached the model
+            self.assertEqual((row["top_p"], row["top_p_seen"]), ("0.9", "0.9"))  # top_p reached the model
             self.assertEqual((row["Joy"], row["temperature"]), ("70", "1.0"))
             self.assertEqual((row["backend"], row["model_served"]), ("music-flamingo", info["model"]))
             self.assertEqual(row["code_commit"].split("+")[0], info["code_version"]["commit"])
             self.assertEqual(row["hardware"], "not_recorded")  # the fake generator reports no GPU
             # "Joy" is not the schema's "joy": flagged, kept as returned, not renamed.
-            self.assertEqual(row["schema_keys"], "missing: joy; extra: Joy, heard, seed_seen")
+            self.assertEqual(row["schema_keys"], "missing: joy; extra: Joy, heard, seed_seen, top_p_seen")
             self.assertEqual(row.get("joy", ""), "")
         self.assertEqual(sorted(r["seed"] for r in rows), ["10", "10", "11", "11"])
 
@@ -215,8 +216,9 @@ class MusicFlamingoBackendTest(unittest.TestCase):
         )
         with mock.patch.dict(sys.modules, {"torch": fake_torch, "transformers": fake_transformers}):
             generate, _ = music_flamingo.build_hf_generator(music_flamingo.load_config(self.config))
-            self.assertEqual(generate([{"role": "user", "content": []}], 1.0, 1), '{"joy": 1}')
+            self.assertEqual(generate([{"role": "user", "content": []}], 1.0, 1, 0.9), '{"joy": 1}')
         processor.apply_chat_template.return_value.to.assert_called_once_with("cuda:0", dtype="bf16")
+        self.assertEqual(model.generate.call_args.kwargs["top_p"], 0.9)
 
     def test_cli_requires_backend_specific_flags(self) -> None:
         cases = [
@@ -224,6 +226,9 @@ class MusicFlamingoBackendTest(unittest.TestCase):
              "--dataset-dir is required"),
             (["submit-experiment", "--prompt-spec", "p", "--trials", "1", "--project", "x"],
              "--dataset-uri is required"),
+            (["submit-experiment", "--backend", "music-flamingo", "--dataset-dir", "d", "--prompt-spec", "p",
+              "--backend-config", "c", "--trials", "1", "--temperature", "0", "--top-p", "0.9"],
+             "--top-p has no effect with --temperature 0"),
         ]
         for argv, message in cases:
             stderr = io.StringIO()

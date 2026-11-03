@@ -8,7 +8,7 @@ from typing import Any
 from schemas import RequestMetadataRow, utc_now_iso
 
 
-RUN_SETTING_FIELDS = ["submitted_at", "temperature", "seed", "prompt_text_hash"]
+RUN_SETTING_FIELDS = ["submitted_at", "temperature", "top_p", "seed", "prompt_text_hash"]
 # The same columns for every backend, so Gemini and Music Flamingo rows can be
 # compared directly. Unknown values get an explicit marker, never a blank.
 RUN_PROVENANCE_FIELDS = ["backend", "model_served", "settings_source", "code_commit", "hardware"]
@@ -82,6 +82,8 @@ def add_run_provenance(row: dict[str, str], payload: dict[str, Any], run_columns
     # Settings that were never sent: say so, instead of leaving a blank.
     if row.get("temperature") == "" and run_columns.get("backend") == "vertex":
         row["temperature"] = "vertex_default"
+    if row.get("top_p") == "":
+        row["top_p"] = "vertex_default" if run_columns.get("backend") == "vertex" else "model_default"
     if row.get("seed") == "":
         row["seed"] = "not_set"
 
@@ -95,6 +97,7 @@ def add_run_settings(
     settings = {
         "submitted_at": submitted_at,
         "temperature": first.temperature if first else "",
+        "top_p": first.top_p if first else "",
         "seed": first.seed if first else "",
         "prompt_text_hash": first.prompt_text_hash if first else "",
     }
@@ -161,6 +164,7 @@ def load_request_metadata_index(path: Path) -> dict[str, list[RequestMetadataRow
                 temperature=row.get("temperature", ""),
                 seed=row.get("seed", ""),
                 prompt_text_hash=row.get("prompt_text_hash", ""),
+                top_p=row.get("top_p", ""),
             )
             index.setdefault(metadata_row.request_id, []).append(metadata_row)
     return index

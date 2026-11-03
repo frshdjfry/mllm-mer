@@ -28,8 +28,8 @@ from typing import Any
 from provenance import code_version
 from schemas import utc_now_iso
 
-# (conversation, temperature, seed) -> generated text
-GenerateFn = Callable[[list[dict[str, Any]], float, "int | None"], str]
+# (conversation, temperature, seed, top_p) -> generated text
+GenerateFn = Callable[[list[dict[str, Any]], float, "int | None", "float | None"], str]
 
 FAILURE_FILENAME = "run_failed.txt"
 RUN_INFO_FILENAME = "run_info.json"
@@ -60,7 +60,9 @@ def read_requests(path: Path) -> list[dict[str, Any]]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
-def request_to_conversation(request: dict[str, Any]) -> tuple[list[dict[str, Any]], float, int | None]:
+def request_to_conversation(
+    request: dict[str, Any],
+) -> tuple[list[dict[str, Any]], float, int | None, float | None]:
     """Turn one batch request line into a Music Flamingo chat conversation."""
     body = request["request"]
     content: list[dict[str, Any]] = []
@@ -77,7 +79,8 @@ def request_to_conversation(request: dict[str, Any]) -> tuple[list[dict[str, Any
                     )
                 content.append({"type": "text", "text": part["text"]})
     generation = body.get("generationConfig", {})
-    return [{"role": "user", "content": content}], float(generation.get("temperature", 1.0)), generation.get("seed")
+    conversation = [{"role": "user", "content": content}]
+    return conversation, float(generation.get("temperature", 1.0)), generation.get("seed"), generation.get("topP")
 
 
 def output_line(custom_id: str, text: str) -> dict[str, Any]:
@@ -112,8 +115,8 @@ def run(
         tmp_path = output_path.with_suffix(output_path.suffix + ".partial")
         with tmp_path.open("w", encoding="utf-8") as handle:
             for request in requests:
-                conversation, temperature, seed = request_to_conversation(request)
-                text = generate(conversation, temperature, seed)
+                conversation, temperature, seed, top_p = request_to_conversation(request)
+                text = generate(conversation, temperature, seed, top_p)
                 handle.write(json.dumps(output_line(request["custom_id"], text)) + "\n")
                 handle.flush()
         os.replace(tmp_path, output_path)
@@ -149,18 +152,20 @@ def build_hf_generator(config: dict[str, Any]) -> tuple[GenerateFn, dict[str, An
     max_new_tokens = int(generation_cfg.get("max_new_tokens", 1024))
     effective: dict[str, Any] = {}
 
-    def generate(conversation: list[dict[str, Any]], temperature: float, seed: int | None) -> str:
+    def generate(conversation: list[dict[str, Any]], temperature: float, seed: int | None, top_p: float | None) -> str:
         inputs = processor.apply_chat_template(
             [conversation], tokenize=True, add_generation_prompt=True, return_dict=True
         ).to(model.device, dtype=model.dtype)  # audio features must match the weights' dtype; token ids are not cast
         kwargs: dict[str, Any] = {"max_new_tokens": max_new_tokens}
         if temperature > 0:
             kwargs.update(do_sample=True, temperature=temperature)
+            if top_p is not None:
+                kwargs["top_p"] = top_p
         else:
             kwargs.update(do_sample=False)
         if seed is not None:
             torch.manual_seed(seed)
-        key = f"temperature={temperature}"
+        key = f"temperature={temperature}" + ("" if top_p is None else f",top_p={top_p}")
         if key not in effective:
             # Everything generate() will use, including library defaults we did not set.
             config = copy.deepcopy(model.generation_config)

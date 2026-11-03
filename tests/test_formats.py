@@ -44,11 +44,11 @@ REGISTRY_COLUMNS = [
 METADATA_COLUMNS = [
     "request_id", "experiment_id", "dataset_id", "file_id", "file_uri", "model", "prompt_id",
     "prompt_instance_id", "trial_index", "variable_name", "variable_value", "temperature", "seed",
-    "prompt_text_hash",
+    "prompt_text_hash", "top_p",
 ]
 RESULT_BASE_COLUMNS = [
     "experiment_id", "dataset_id", "file_id", "file_uri", "model", "prompt_id", "prompt_instance_id",
-    "trial_index", "raw_response_json", "job_id", "created_at", "submitted_at", "temperature", "seed",
+    "trial_index", "raw_response_json", "job_id", "created_at", "submitted_at", "temperature", "top_p", "seed",
     "prompt_text_hash", "backend", "model_served", "settings_source", "code_commit", "hardware", "schema_keys",
 ]
 FLAMINGO_RUN_COLUMNS = {
@@ -123,6 +123,22 @@ class FormatTest(unittest.TestCase):
             check_golden(self, f"{name}_requests.jsonl", (self.tmp / "requests.jsonl").read_text())
             check_golden(self, f"{name}_request_metadata.csv", (self.tmp / "request_metadata.csv").read_text())
             self.assertEqual(header(self.tmp / "request_metadata.csv"), METADATA_COLUMNS)
+
+    def test_top_p_is_sent_only_when_given(self) -> None:
+        spec_path = self.tmp / "simple.yaml"
+        spec_path.write_text(SIMPLE_PROMPT)
+        records = [InputRecord("audio", "3f9a1c7e5b2d8046", "gs://example-bucket/audio/3f9a1c7e5b2d8046.wav")]
+        for top_p, expected in ((0.9, 0.9), (None, None)):
+            requests = build_requests(
+                experiment_id="e", dataset_id="d", model="m", input_records=records,
+                prompt_instances=expand_prompt_instances(load_prompt_spec(spec_path)), trials=1, top_p=top_p,
+            )
+            save_requests_jsonl(requests, self.tmp / "r.jsonl")
+            save_request_metadata_csv(requests, self.tmp / "m.csv")
+            config = json.loads((self.tmp / "r.jsonl").read_text())["request"]["generationConfig"]
+            self.assertEqual(config.get("topP"), expected)
+            with (self.tmp / "m.csv").open(encoding="utf-8", newline="") as handle:
+                self.assertEqual(next(csv.DictReader(handle))["top_p"], "" if top_p is None else "0.9")
 
     def test_audio_position_orders_parts(self) -> None:
         for prompt, name, expected in (
@@ -205,6 +221,7 @@ class FormatTest(unittest.TestCase):
             self.assertEqual((row["model_served"], row["temperature"], row["seed"]),
                              ("gemini-3.8-flash", "vertex_default", "not_set"))
             self.assertEqual((row["backend"], row["code_commit"]), ("vertex", "not_recorded"))
+            self.assertEqual(row["top_p"], "vertex_default")
 
     # 6: both backends produce output the parser treats the same ----------------
     def test_music_flamingo_output_matches_gemini_shape(self) -> None:
@@ -221,7 +238,7 @@ class FormatTest(unittest.TestCase):
         ):
             save_requests_jsonl(self.build(prompt, name), self.tmp / "r.jsonl")
             request = json.loads((self.tmp / "r.jsonl").read_text().splitlines()[0])
-            conversation, _, seed = music_flamingo.request_to_conversation(request)
+            conversation, _, seed, _ = music_flamingo.request_to_conversation(request)
             self.assertEqual([p["type"] for p in conversation[0]["content"]], expected)
             self.assertEqual(seed, 10)
 
