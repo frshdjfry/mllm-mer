@@ -93,9 +93,18 @@ def write_parsed_results(record: BatchJobRecord, local_artifacts_root: Path, out
         request_metadata_index=load_request_metadata_index(experiment_dir / "request_metadata.csv"),
         submitted_at=record.submitted_at,
         run_columns=run_provenance(record.backend or "vertex", experiment_dir),
+        schema_fields=load_schema_fields(experiment_dir / "prompt_instances.json"),
     )
     save_parsed_results_csv(parsed_rows, experiment_dir / "results" / "parsed_long.csv")
     save_parsed_results_csv(parsed_rows, experiment_results_root / f"{record.experiment_id}.csv")
+
+
+def load_schema_fields(path: Path) -> dict[str, list[str]] | None:
+    """response_schema field names per prompt_instance_id, from the saved prompt instances."""
+    if not path.is_file():
+        return None
+    instances = json.loads(path.read_text(encoding="utf-8"))
+    return {instance["prompt_instance_id"]: list(instance.get("response_schema") or {}) for instance in instances}
 
 
 def run_provenance(backend: str, experiment_dir: Path) -> dict[str, str]:

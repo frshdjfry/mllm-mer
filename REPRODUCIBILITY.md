@@ -17,7 +17,7 @@ NLP) ask for to where this CLI records them. Paths are relative to
 | Which code produced the result | `experiment_spec.json` and `run_info.json` → `code_version` (git commit, branch, uncommitted-changes flag). A run with uncommitted changes is not reproducible from the commit alone. Both: `code_commit` in every results row (`+uncommitted` if so). |
 | Exactly which data | `input_manifest.json`: every file with its path and checksum (`sha256` for local files; GCS `md5_base64` and object `generation` for `gs://` files). |
 | Licences | Music Flamingo: NVIDIA OneWay Noncommercial (research only), see README. Dataset licences belong to the project using this CLI. |
-| Raw outputs kept unaltered | `results/raw_output.jsonl` is stored as returned; parsing never changes model output (see README). |
+| Raw outputs kept unaltered | `results/raw_output.jsonl` is stored as returned; parsing never changes model output (see README). Answer keys are never renamed; `schema_keys` in every row says whether the answer used exactly the schema's field names. |
 
 Known limits: hosted API models (Gemini) can change or be retired, so exact
 re-runs are not possible in the long term; report `modelVersion` and run

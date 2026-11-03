@@ -49,7 +49,7 @@ METADATA_COLUMNS = [
 RESULT_BASE_COLUMNS = [
     "experiment_id", "dataset_id", "file_id", "file_uri", "model", "prompt_id", "prompt_instance_id",
     "trial_index", "raw_response_json", "job_id", "created_at", "submitted_at", "temperature", "seed",
-    "prompt_text_hash", "backend", "model_served", "settings_source", "code_commit", "hardware",
+    "prompt_text_hash", "backend", "model_served", "settings_source", "code_commit", "hardware", "schema_keys",
 ]
 FLAMINGO_RUN_COLUMNS = {
     "backend": "music-flamingo", "model_served": "example-model@abc123",
@@ -138,17 +138,29 @@ class FormatTest(unittest.TestCase):
     def test_parsed_results_file(self) -> None:
         requests = self.build(SIMPLE_PROMPT, "simple")
         save_request_metadata_csv(requests, self.tmp / "request_metadata.csv")
-        answers = ['{"joy": 71.5, "sadness": 4}', '```json\n{"joy": 70}\n```', "not json at all", '{"joy": 69, "sadness": 6}']
+        answers = ['{"joy": 71.5, "Sadness": 4}', '```json\n{"joy": 70}\n```', "not json at all", '{"joy": 69, "sadness": 6}']
         output = "".join(json.dumps(music_flamingo.output_line(r.request_id, a)) + "\n" for r, a in zip(requests, answers))
         index = result_parser.load_request_metadata_index(self.tmp / "request_metadata.csv")
         with mock.patch.object(result_parser, "utc_now_iso", return_value=FIXED_TIME):
             rows = result_parser.parse_output_jsonl_text(output, job_id="job-1", request_metadata_index=index,
-                                                         submitted_at=FIXED_TIME, run_columns=FLAMINGO_RUN_COLUMNS)
+                                                         submitted_at=FIXED_TIME, run_columns=FLAMINGO_RUN_COLUMNS,
+                                                         schema_fields={"golden_simple_v1__base": ["joy", "sadness"]})
         result_parser.save_parsed_results_csv(rows, self.tmp / "parsed.csv")
         check_golden(self, "simple_parsed_results.csv", (self.tmp / "parsed.csv").read_text())
         self.assertEqual(header(self.tmp / "parsed.csv")[: len(RESULT_BASE_COLUMNS)], RESULT_BASE_COLUMNS)
         first = rows[0]
-        self.assertEqual((first["joy"], first["sadness"], first["file_id"]), ("71.5", "4", "3f9a1c7e5b2d8046"))
+        self.assertEqual((first["joy"], first["file_id"]), ("71.5", "3f9a1c7e5b2d8046"))
+        self.assertEqual([r["schema_keys"] for r in rows],
+                         ["missing: sadness; extra: Sadness", *["missing: joy, sadness; extra: candidates"] * 2, "exact"])
+        self.assertEqual(first["Sadness"], "4")  # kept under the model's own key, never renamed
+
+    def test_schema_keys_flag_but_never_rename(self) -> None:
+        schema = ["joyful_activation", "sadness"]
+        check = result_parser.check_schema_keys
+        self.assertEqual(check({"joyful activation": 80, "sadness": 10}, schema),
+                         "missing: joyful_activation; extra: joyful activation")
+        self.assertEqual(check({"joyful_activation": 80, "sadness": 10}, schema), "exact")
+        self.assertEqual(check({"sadness": 1}, None), "not_checked")
 
     # 4: registry upgrades ------------------------------------------------------
     def test_registry_upgrades_from_every_older_header(self) -> None:

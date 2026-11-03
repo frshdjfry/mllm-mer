@@ -42,10 +42,10 @@ response_schema:
 
 
 def fake_generate(conversation, temperature, seed):
-    """Stands in for the model: echoes what it was given, as JSON."""
+    """Stands in for the model: echoes what it was given, as JSON ("Joy": a key not in the schema's form)."""
     content = conversation[0]["content"]
     audio = [part["path"] for part in content if part["type"] == "audio"]
-    return json.dumps({"joy": 70, "sadness": 5, "heard": Path(audio[0]).name, "seed_seen": seed})
+    return json.dumps({"Joy": 70, "sadness": 5, "heard": Path(audio[0]).name, "seed_seen": seed})
 
 
 class MusicFlamingoBackendTest(unittest.TestCase):
@@ -123,10 +123,13 @@ class MusicFlamingoBackendTest(unittest.TestCase):
         for row in rows:
             self.assertEqual(Path(row["file_uri"]).name, row["heard"])  # right audio went with right request
             self.assertEqual(row["seed"], row["seed_seen"])  # seed reached the model
-            self.assertEqual((row["joy"], row["temperature"]), ("70", "1.0"))
+            self.assertEqual((row["Joy"], row["temperature"]), ("70", "1.0"))
             self.assertEqual((row["backend"], row["model_served"]), ("music-flamingo", info["model"]))
             self.assertEqual(row["code_commit"].split("+")[0], info["code_version"]["commit"])
             self.assertEqual(row["hardware"], "not_recorded")  # the fake generator reports no GPU
+            # "Joy" is not the schema's "joy": flagged, kept as returned, not renamed.
+            self.assertEqual(row["schema_keys"], "missing: joy; extra: Joy, heard, seed_seen")
+            self.assertEqual(row.get("joy", ""), "")
         self.assertEqual(sorted(r["seed"] for r in rows), ["10", "10", "11", "11"])
 
         # Rebuilding gives the same table and leaves the raw output untouched.

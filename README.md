@@ -136,6 +136,19 @@ before code commits were recorded), `vertex_default` for a temperature that
 was never sent to Gemini, `not_set` for a seed that was never sent.
 `code_commit` ends in `+uncommitted` if the code had uncommitted changes.
 
+`schema_keys` says whether the answer used the prompt's `response_schema`
+field names. Gemini is forced to use them; Music Flamingo is only asked to,
+and may write e.g. `"joyful activation"` for `joyful_activation`. Keys are
+never renamed: prevent such answers in the prompt (one spelling per field
+name), and check every row that is not `exact` before analysis.
+
+| `schema_keys` | Meaning |
+|---|---|
+| `exact` | every key is a schema name |
+| `missing: …` | schema fields not answered (also when the answer could not be parsed) |
+| `extra: …` | keys not in the schema, kept as returned |
+| `not_checked` | no saved schema, or the answer is not a JSON object |
+
 The registry gains `temperature` and `base_seed` columns. An older registry
 is upgraded on the first submit with this version; after that, older
 versions of this CLI cannot read it, so keep using this version.
