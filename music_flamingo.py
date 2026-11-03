@@ -152,7 +152,7 @@ def build_hf_generator(config: dict[str, Any]) -> tuple[GenerateFn, dict[str, An
     def generate(conversation: list[dict[str, Any]], temperature: float, seed: int | None) -> str:
         inputs = processor.apply_chat_template(
             [conversation], tokenize=True, add_generation_prompt=True, return_dict=True
-        ).to(model.device)
+        ).to(model.device, dtype=model.dtype)  # audio features must match the weights' dtype; token ids are not cast
         kwargs: dict[str, Any] = {"max_new_tokens": max_new_tokens}
         if temperature > 0:
             kwargs.update(do_sample=True, temperature=temperature)

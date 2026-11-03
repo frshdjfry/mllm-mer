@@ -192,6 +192,29 @@ class MusicFlamingoBackendTest(unittest.TestCase):
         self.assertNotIn("--gres", script)
         self.assertIn("#SBATCH --account test-account", script)
 
+    def test_inputs_are_cast_to_the_model_dtype(self) -> None:
+        # Regression: on the GPU, float32 audio features met bfloat16 weights and generate() failed.
+        class GenerationConfig:
+            def update(self, **kwargs): pass
+            def to_dict(self): return {}
+
+        model = mock.MagicMock(device="cuda:0", dtype="bf16", generation_config=GenerationConfig())
+        processor = mock.MagicMock()
+        processor.batch_decode.return_value = ['{"joy": 1}']
+        fake_torch = types.SimpleNamespace(
+            bfloat16="bf16", manual_seed=mock.Mock(), __version__="test",
+            version=types.SimpleNamespace(cuda=""), cuda=types.SimpleNamespace(is_available=lambda: False),
+        )
+        fake_transformers = types.SimpleNamespace(
+            __version__="test",
+            AutoProcessor=types.SimpleNamespace(from_pretrained=lambda *a, **k: processor),
+            AudioFlamingo3ForConditionalGeneration=types.SimpleNamespace(from_pretrained=lambda *a, **k: model),
+        )
+        with mock.patch.dict(sys.modules, {"torch": fake_torch, "transformers": fake_transformers}):
+            generate, _ = music_flamingo.build_hf_generator(music_flamingo.load_config(self.config))
+            self.assertEqual(generate([{"role": "user", "content": []}], 1.0, 1), '{"joy": 1}')
+        processor.apply_chat_template.return_value.to.assert_called_once_with("cuda:0", dtype="bf16")
+
     def test_cli_requires_backend_specific_flags(self) -> None:
         cases = [
             (["submit-experiment", "--backend", "music-flamingo", "--prompt-spec", "p", "--trials", "1"],
