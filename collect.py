@@ -119,7 +119,7 @@ def run_provenance(backend: str, experiment_dir: Path) -> dict[str, str]:
         return {
             "backend": backend,
             "model_served": "",  # read per line from Gemini's modelVersion
-            "settings_source": "requested; unsent settings are Vertex defaults",
+            "settings_source": "as sent; Vertex does not report the settings used",
             "code_commit": commit,
             "hardware": "google_hosted",
         }

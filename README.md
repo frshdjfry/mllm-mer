@@ -131,7 +131,7 @@ Gemini and Music Flamingo results can be compared in one table:
 |---|---|---|
 | `backend` | `vertex` | `music-flamingo` |
 | `model_served` | `modelVersion` from that response line | pinned `id@revision` |
-| `settings_source` | `requested; unsent settings are Vertex defaults` | `effective; see results/run_info.json` |
+| `settings_source` | `as sent; Vertex does not report the settings used` | `effective; see results/run_info.json` |
 | `code_commit` | commit at submit time | commit the runner ran |
 | `hardware` | `google_hosted` | GPU name (`cpu` without one) |
 
