@@ -247,6 +247,58 @@ Offline tests (no GPU, Slurm or network): `python -m unittest discover -s tests`
 Prompt specs may set `audio_position: before` (default) or `after`, and both
 backends send the parts in that order.
 
+## Qwen backend (Alibaba Cloud Model Studio API)
+
+`--backend qwen` sends each request to a Qwen Omni model through Model
+Studio's OpenAI-compatible Chat Completions endpoint, using the same prompt
+specs, registry, artifacts and results columns as the other backends. Tested
+model IDs: `qwen3.5-omni-plus` and `qwen3.8-omni-flash`.
+
+Setup: `pip install "openai>=1.52" PyYAML`, then copy `.env.example` to `.env`
+(gitignored) and fill in `DASHSCOPE_API_KEY` and `QWEN_BASE_URL` (Singapore
+and Beijing keys and URLs differ). The key is read only from the environment
+or `.env`, never from code or the command line.
+
+```bash
+python cli.py submit-experiment --backend qwen \
+  --dataset-dir /path/to/audio \
+  --prompt-spec examples/simple_prompt.yaml \
+  --model qwen3.5-omni-plus \
+  --trials 1 --seed 0
+python cli.py collect-results
+```
+
+How it differs from Gemini:
+- Audio is read from a local folder and sent inline as base64 (under 10 MB
+  encoded per file); nothing is uploaded to a bucket.
+- Requests run one by one at submit time (Model Studio has no batch API for
+  these models in Singapore). If a run stops, its registry status is
+  `JOB_STATE_STOPPED`, answers so far stay in `raw_output.jsonl.partial`, and
+  the printed `python -m qwen_api run ...` command resumes it without paying
+  for answered requests again; then run `collect-results`. This also covers
+  Ctrl-C. `collect-results` prints the resume command for stopped runs. A
+  finished run is never run again, because that would re-bill everything.
+  Each attempt is kept in `run_info.json` (`attempts`). If attempts used
+  different code, the `code_commit` column says `mixed: ...`, and each answer
+  records its own commit in `raw_output.jsonl` (`qwen.code_commit`).
+- All audio files are checked (format, size) before anything is sent. A request
+  the API rejects (HTTP 400/422, e.g. content inspection) is logged in
+  `results/rejected_requests.jsonl` and has no results row. The run goes on,
+  and `collect-results` warns about it. If the first 3 requests are all
+  rejected, the run stops, since that points to a settings problem.
+- `response_format: json_object` is sent, so answers are bare JSON (without
+  it, both models wrap JSON in a ```` ```json ```` block, which the parser does
+  not read). Model Studio's docs list it as unsupported in Singapore, but it
+  worked there on 2026-11-24. Unlike Gemini's `responseSchema`, it does not
+  enforce the field names: check `schema_keys`.
+- `max_tokens` and `enable_thinking` are not sent. `qwen3.8-omni-flash` then
+  thinks before answering (its reasoning text is kept in `raw_output.jsonl`
+  under `qwen.reasoning` and costs output tokens); `qwen3.5-omni-plus` does not.
+- `model_served` is the model name Model Studio returned for each answer;
+  `raw_output.jsonl` also keeps token usage, the request id, any reasoning
+  text, and the settings sent (without the audio). `hardware` is
+  `alibaba_hosted`; `results/run_info.json` holds SDK version and token totals.
+
 ## Artifacts
 
 Each experiment gets a local directory under `outputs/experiments/<experiment_id>/` with:

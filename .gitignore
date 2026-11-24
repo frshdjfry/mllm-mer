@@ -10,3 +10,8 @@ config/*.yaml
 
 # Python virtual environment
 .venv/
+
+# API keys and endpoints (see README: Qwen backend). Never commit.
+.env
+.env.*
+!.env.example
