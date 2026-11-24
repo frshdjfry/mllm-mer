@@ -62,7 +62,9 @@ class FakeQwen:
                 "reasoning": "", "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}}
 
 
-class QwenBackendTest(unittest.TestCase):
+class QwenTestBase(unittest.TestCase):
+    """Temporary audio folder, prompt and registry, plus submit/results helpers."""
+
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.audio = self.tmp / "audio"
@@ -89,6 +91,8 @@ class QwenBackendTest(unittest.TestCase):
         with open(self.artifacts.parent / "experiment_results" / f"{experiment_id}.csv", encoding="utf-8") as handle:
             return list(csv.DictReader(handle))
 
+
+class QwenBackendTest(QwenTestBase):
     def test_request_translation(self) -> None:
         request = {"custom_id": "x", "request": {"model": "qwen3.8-omni-flash", "contents": [{"role": "user", "parts": [
             {"text": "Rate it."}, {"file_data": {"mime_type": "audio/mpeg", "file_uri": str(self.audio / "b2.mp3")}}]}],
@@ -266,6 +270,123 @@ class QwenBackendTest(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     cli.main()
             self.assertIn(message, stderr.getvalue())
+
+
+class ApiStatusError(Exception):
+    """Like openai.APIStatusError: carries the HTTP status."""
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"HTTP {status_code}: rejected")
+        self.status_code = status_code
+
+
+class QwenReviewFixesTest(QwenTestBase):
+    """Regressions for the PR #3 review: no double billing, nothing lost, provenance complete."""
+
+    def output_paths(self, experiment_id: str) -> tuple[Path, Path]:
+        results = self.artifacts / experiment_id / "results"
+        return Path(read_registry(self.registry)[0].input_jsonl_uri), results / qwen_api.OUTPUT_FILENAME
+
+    def test_finished_run_is_not_run_again(self) -> None:
+        experiment_id = self.submit(FakeQwen(), trials=1)
+        requests, output = self.output_paths(experiment_id)
+        before = output.read_text()
+        again = FakeQwen()
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            qwen_api.run(requests, output, call=again)
+        self.assertEqual((len(again.calls), output.read_text()), (0, before))  # nothing re-billed or replaced
+
+    def test_ctrl_c_still_registers_the_experiment(self) -> None:
+        class Interrupting(FakeQwen):
+            def __call__(self, kwargs):
+                if len(self.calls) == 1:
+                    raise KeyboardInterrupt
+                return super().__call__(kwargs)
+
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            experiment_id = self.submit(Interrupting(), trials=2)
+        self.assertIn("interrupted (Ctrl-C)", stderr.getvalue())
+        record = read_registry(self.registry)[0]
+        self.assertEqual((record.experiment_id, record.status), (experiment_id, qwen_api.STOPPED))
+
+    def test_resume_keeps_every_attempt_and_flags_mixed_code(self) -> None:
+        with redirect_stderr(io.StringIO()):
+            experiment_id = self.submit(FakeQwen(fail_on_call=3))
+        requests, output = self.output_paths(experiment_id)
+        later = {"commit": "b" * 40, "branch": "x", "uncommitted_changes": False}
+        with mock.patch.object(qwen_api, "code_version", return_value=later):
+            qwen_api.run(requests, output, call=FakeQwen())
+        info = json.loads((output.parent / qwen_api.RUN_INFO_FILENAME).read_text())
+        self.assertEqual(len(info["attempts"]), 2)
+        self.assertIn("failed_at", info["attempts"][0])  # the first attempt is not lost
+        self.assertEqual([a["answered_this_attempt"] for a in info["attempts"]], [2, 2])
+        commits = {json.loads(line)["qwen"]["code_commit"] for line in output.read_text().splitlines()}
+        self.assertEqual(len(commits), 2)  # each answer says which code produced it
+        run_collect_results(self.registry, self.artifacts, project=None, location="global")
+        for row in self.results(experiment_id):
+            self.assertTrue(row["code_commit"].startswith("mixed: "), row["code_commit"])
+
+    def test_bad_audio_is_found_before_anything_is_sent(self) -> None:
+        (self.audio / "c3.wav").write_bytes(b"x" * 100)
+        fake = FakeQwen()
+        stderr = io.StringIO()
+        with mock.patch.object(qwen_api, "MAX_BASE64_BYTES", 50), redirect_stderr(stderr):
+            self.submit(fake, trials=1)
+        self.assertEqual(len(fake.calls), 0)  # nothing paid for
+        self.assertIn("c3.wav is too large", stderr.getvalue())
+
+    def test_a_rejected_request_is_logged_and_the_run_goes_on(self) -> None:
+        class RejectsOne(FakeQwen):
+            def __call__(self, kwargs):
+                if len(self.calls) == 1:
+                    self.calls.append(kwargs)
+                    raise ApiStatusError(400)
+                return super().__call__(kwargs)
+
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            experiment_id = self.submit(RejectsOne(), trials=2)
+            self.assertEqual(read_registry(self.registry)[0].status, "JOB_STATE_SUCCEEDED")
+            run_collect_results(self.registry, self.artifacts, project=None, location="global")
+        self.assertEqual(len(self.results(experiment_id)), 3)  # 4 requests, 1 rejected
+        rejected = (self.artifacts / experiment_id / "results" / qwen_api.REJECTED_FILENAME).read_text()
+        self.assertEqual(json.loads(rejected)["status_code"], 400)
+        self.assertIn("1 requests in", stderr.getvalue())  # collect warns about the missing row
+
+    def test_rejections_before_any_answer_stop_the_run(self) -> None:
+        class RejectsAll(FakeQwen):
+            def __call__(self, kwargs):
+                self.calls.append(kwargs)
+                raise ApiStatusError(400)
+
+        fake = RejectsAll()
+        with redirect_stderr(io.StringIO()):
+            self.submit(fake, trials=2)
+        self.assertEqual(len(fake.calls), qwen_api.MAX_REJECTED_BEFORE_ANY_ANSWER)
+        self.assertEqual(read_registry(self.registry)[0].status, qwen_api.STOPPED)
+
+    def test_collect_names_stopped_runs(self) -> None:
+        with redirect_stderr(io.StringIO()):
+            experiment_id = self.submit(FakeQwen(fail_on_call=2))
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            run_collect_results(self.registry, self.artifacts, project=None, location="global")
+        self.assertIn(f"Not collected: {experiment_id} stopped part-way", stderr.getvalue())
+        self.assertIn("python -m qwen_api run --requests", stderr.getvalue())
+
+    def test_a_line_cut_off_mid_write_does_not_block_resume(self) -> None:
+        with redirect_stderr(io.StringIO()):
+            experiment_id = self.submit(FakeQwen(fail_on_call=3))
+        requests, output = self.output_paths(experiment_id)
+        partial = output.with_suffix(output.suffix + ".partial")
+        partial.write_text(partial.read_text() + '{"custom_id": "r0", "resp')  # killed mid-write
+        resumed = FakeQwen()
+        qwen_api.run(requests, output, call=resumed)
+        self.assertEqual(len(resumed.calls), 2)
+        self.assertEqual(len(output.read_text().splitlines()), 4)
+        info = json.loads((output.parent / qwen_api.RUN_INFO_FILENAME).read_text())
+        self.assertTrue(info["dropped_incomplete_last_line"])
 
 
 if __name__ == "__main__":

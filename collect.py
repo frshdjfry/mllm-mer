@@ -54,6 +54,12 @@ def run_collect_results(
         update_job_status(registry_path, record.job_id, status)
 
         if not client.job_is_finished(status):
+            if status == "JOB_STATE_STOPPED":  # a Qwen run that stopped part-way: say so, don't skip silently
+                from qwen_api import OUTPUT_FILENAME as QWEN_OUTPUT, resume_command
+
+                print(f"Not collected: {record.experiment_id} stopped part-way. Resume with:\n  "
+                      f"{resume_command(record.input_jsonl_uri, Path(record.output_uri_prefix) / QWEN_OUTPUT)}",
+                      file=sys.stderr)
             continue
         if not client.job_succeeded(status):
             mark_job_collected(registry_path, record.job_id, status)
@@ -135,6 +141,11 @@ def run_provenance(backend: str, experiment_dir: Path) -> dict[str, str]:
             "hardware": "google_hosted",
         }
     if backend == "qwen":
+        # A resumed run can mix code versions: then say so, rather than give the last one for every row.
+        commits = sorted({qwen_commit(attempt) for attempt in info.get("attempts", [])
+                          if attempt.get("answered_this_attempt", 1)})
+        if len(commits) > 1:
+            commit = f"mixed: {', '.join(commits)}; per answer in raw_output.jsonl (qwen.code_commit)"
         return {
             "backend": backend,
             "model_served": "",  # read per line from the model name Model Studio returned
@@ -150,6 +161,12 @@ def run_provenance(backend: str, experiment_dir: Path) -> dict[str, str]:
         "code_commit": commit,
         "hardware": "cpu" if gpu == "none" else gpu or NOT_RECORDED,
     }
+
+
+def qwen_commit(attempt: dict) -> str:
+    from qwen_api import commit_label
+
+    return commit_label(attempt.get("code_version") or {})
 
 
 def read_json_if_exists(path: Path) -> dict:

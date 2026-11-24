@@ -124,13 +124,24 @@ def without_experiment_id(payload: Any, experiment_id: str) -> Any:
 
 
 def default_experiments() -> list[Path]:
-    """Newest saved Qwen experiment for each model."""
-    newest: dict[str, Path] = {}
-    for spec_path in sorted((REPO_DIR / "outputs" / "experiments").glob("*/experiment_spec.json")):
+    """Newest saved Qwen experiment for each model (by the time it was created, not by folder name)."""
+    newest: dict[str, tuple[str, Path]] = {}
+    for spec_path in (REPO_DIR / "outputs" / "experiments").glob("*/experiment_spec.json"):
         spec = json.loads(spec_path.read_text(encoding="utf-8"))
-        if spec.get("backend") == "qwen" and (spec_path.parent / "results" / "raw_output.jsonl").is_file():
-            newest[spec["model"]] = spec_path.parent  # sorted by timestamp, so the last one wins
-    return list(newest.values())
+        if spec.get("backend") != "qwen" or not (spec_path.parent / "results" / "raw_output.jsonl").is_file():
+            continue
+        created = spec.get("created_at", "")
+        if spec["model"] not in newest or created > newest[spec["model"]][0]:
+            newest[spec["model"]] = (created, spec_path.parent)
+    return [path for _, path in newest.values()]
+
+
+def shown_path(path: Path) -> str:
+    """Path relative to the repository when inside it, else absolute."""
+    try:
+        return str(path.relative_to(REPO_DIR))
+    except ValueError:
+        return str(path)
 
 
 def trace_experiment(experiment_dir: Path, songs: set[str] | None, gemini_dir: Path | None) -> None:
@@ -140,7 +151,7 @@ def trace_experiment(experiment_dir: Path, songs: set[str] | None, gemini_dir: P
     print(f"REPLAYING SAVED EXPERIMENT  {experiment_id}")
     print(f"  model: {spec['model']}   backend: {spec['backend']}   "
           f"temperature: {spec['temperature']}   base_seed: {spec['base_seed']}   top_p: {spec['top_p']}")
-    print(f"  folder: {experiment_dir.relative_to(REPO_DIR)}")
+    print(f"  folder: {shown_path(experiment_dir)}")
     print("═" * WIDTH)
 
     # STEP 1: the dataset folder becomes a list of input records ----------------------------

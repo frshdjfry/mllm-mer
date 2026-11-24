@@ -275,7 +275,17 @@ How it differs from Gemini:
   these models in Singapore). If a run stops, its registry status is
   `JOB_STATE_STOPPED`, answers so far stay in `raw_output.jsonl.partial`, and
   the printed `python -m qwen_api run ...` command resumes it without paying
-  for answered requests again; then run `collect-results`.
+  for answered requests again; then run `collect-results`. This also covers
+  Ctrl-C. `collect-results` prints the resume command for stopped runs. A
+  finished run is never run again, because that would re-bill everything.
+  Each attempt is kept in `run_info.json` (`attempts`). If attempts used
+  different code, the `code_commit` column says `mixed: ...`, and each answer
+  records its own commit in `raw_output.jsonl` (`qwen.code_commit`).
+- All audio files are checked (format, size) before anything is sent. A request
+  the API rejects (HTTP 400/422, e.g. content inspection) is logged in
+  `results/rejected_requests.jsonl` and has no results row. The run goes on,
+  and `collect-results` warns about it. If the first 3 requests are all
+  rejected, the run stops, since that points to a settings problem.
 - `response_format: json_object` is sent, so answers are bare JSON (without
   it, both models wrap JSON in a ```` ```json ```` block, which the parser does
   not read). Model Studio's docs list it as unsupported in Singapore, but it

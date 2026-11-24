@@ -20,6 +20,10 @@ are kept and not paid for again.
 
     python -m qwen_api run --requests REQ.jsonl --output OUT.jsonl   # resume a stopped run
 
+A finished run is never re-run (that would re-send and re-bill every request).
+A request the API rejects (HTTP 400/422, e.g. content inspection) is logged in
+results/rejected_requests.jsonl and the run goes on; it has no row in the results.
+
 The model comes from each request line (`submit-experiment --model`).
 """
 
@@ -45,6 +49,11 @@ ENV_FILE = REPO_DIR / ".env"
 OUTPUT_FILENAME = "raw_output.jsonl"
 FAILURE_FILENAME = "run_failed.txt"
 RUN_INFO_FILENAME = "run_info.json"
+REJECTED_FILENAME = "rejected_requests.jsonl"
+# HTTP statuses that reject one request (its content) rather than the whole run.
+REJECTED_STATUSES = {400, 422}
+# Stop if this many requests in a row are rejected before any is answered: likely a settings error.
+MAX_REJECTED_BEFORE_ANY_ANSWER = 3
 BACKEND = "qwen"
 STOPPED = "JOB_STATE_STOPPED"  # stopped part-way; resumable
 # Model Studio rejects inline (base64) audio whose encoded string is 10 MB or more.
@@ -99,18 +108,44 @@ def api_settings() -> tuple[str, str]:
 # --- request translation -----------------------------------------------------
 
 
-def audio_part(path: str) -> dict[str, Any]:
-    """A local audio file as an inline input_audio part."""
+def check_audio(path: str) -> str:
+    """Raise if the file can't be sent inline (remote, missing, unsupported or too large); return its format."""
+    if "://" in path:
+        raise ValueError(f"The qwen backend reads local audio files, not URIs: {path}")
     suffix = Path(path).suffix.lower()
     if suffix not in _AUDIO_FORMATS:
         raise ValueError(f"Unsupported audio format for Qwen: {path}")
-    encoded = base64.b64encode(Path(path).read_bytes()).decode("ascii")
-    if len(encoded) >= MAX_BASE64_BYTES:
+    if not Path(path).is_file():
+        raise ValueError(f"Audio file not found: {path}")
+    encoded_size = 4 * ((Path(path).stat().st_size + 2) // 3)  # base64 length, without reading the file
+    if encoded_size >= MAX_BASE64_BYTES:
         raise ValueError(
-            f"{path} is too large to send inline ({len(encoded)} bytes as base64; Model Studio's limit is "
+            f"{path} is too large to send inline ({encoded_size} bytes as base64; Model Studio's limit is "
             f"{MAX_BASE64_BYTES}). Shorten or compress it."
         )
-    return {"type": "input_audio", "input_audio": {"data": f"data:;base64,{encoded}", "format": _AUDIO_FORMATS[suffix]}}
+    return _AUDIO_FORMATS[suffix]
+
+
+def check_all_audio(requests: list[dict[str, Any]]) -> None:
+    """Check every audio file before anything is sent, so one bad file can't stop a run half-way (and half-paid)."""
+    problems = []
+    for request in requests:
+        for message in request["request"]["contents"]:
+            for part in message["parts"]:
+                if "file_data" in part:
+                    try:
+                        check_audio(part["file_data"]["file_uri"])
+                    except ValueError as error:
+                        problems.append(str(error))
+    if problems:
+        raise ValueError("Nothing was sent; fix these audio files first:\n  " + "\n  ".join(sorted(set(problems))))
+
+
+def audio_part(path: str) -> dict[str, Any]:
+    """A local audio file as an inline input_audio part."""
+    audio_format = check_audio(path)
+    encoded = base64.b64encode(Path(path).read_bytes()).decode("ascii")
+    return {"type": "input_audio", "input_audio": {"data": f"data:;base64,{encoded}", "format": audio_format}}
 
 
 def request_to_chat_kwargs(request: dict[str, Any]) -> dict[str, Any]:
@@ -120,10 +155,7 @@ def request_to_chat_kwargs(request: dict[str, Any]) -> dict[str, Any]:
     for message in body["contents"]:
         for part in message["parts"]:
             if "file_data" in part:
-                uri = part["file_data"]["file_uri"]
-                if "://" in uri:
-                    raise ValueError(f"The qwen backend reads local audio files, not URIs: {uri}")
-                content.append(audio_part(uri))
+                content.append(audio_part(part["file_data"]["file_uri"]))
             elif "text" in part:
                 content.append({"type": "text", "text": part["text"]})
     generation = body.get("generationConfig", {})
@@ -166,8 +198,20 @@ def output_line(custom_id: str, response: dict[str, Any]) -> dict[str, Any]:
             "request_id": response["id"],
             "reasoning": response["reasoning"],
             "sent": response["sent"],
+            # Which code produced this answer (a resumed run can mix commits).
+            "code_commit": response.get("code_commit", ""),
         },
     }
+
+
+def commit_label(version: dict[str, Any]) -> str:
+    """Commit id, with '+uncommitted' if the checkout had uncommitted changes (as in the results table)."""
+    label = version.get("commit") or "not_recorded"
+    return label + "+uncommitted" if version.get("uncommitted_changes") else label
+
+
+def resume_command(requests_path: str | Path, output_path: str | Path) -> str:
+    return f"python -m qwen_api run --requests {requests_path} --output {output_path}"
 
 
 # --- calling the API -----------------------------------------------------------
@@ -243,12 +287,21 @@ def run(
     """Run every request and write the output atomically. Returns the number of requests.
 
     Answers are appended to OUT.partial as they arrive; if the run stops, the
-    next run skips the requests already answered there.
+    next run skips the requests already answered there. Each attempt is kept
+    in run_info.json ("attempts"), so a resumed run's provenance is complete.
     """
+    if output_path.is_file():
+        raise ValueError(
+            f"{output_path} already exists: this run finished. Running it again would re-send and re-bill every "
+            "request and replace the answers. To really start over, move that file away first."
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     failure_path = output_path.parent / FAILURE_FILENAME
     failure_path.unlink(missing_ok=True)
     partial_path = output_path.with_suffix(output_path.suffix + ".partial")
+    rejected_path = output_path.parent / REJECTED_FILENAME
+    info_path = output_path.parent / RUN_INFO_FILENAME
+    earlier_attempts = read_attempts(info_path)
     info: dict[str, Any] = {
         "backend": BACKEND,
         "started_at": utc_now_iso(),
@@ -267,43 +320,93 @@ def run(
             api_key, base_url = api_settings()
             info["base_url"] = base_url
             call = build_openai_call(api_key, base_url)
-        done = {json.loads(line)["custom_id"] for line in _read_lines(partial_path)}
+        done, dropped = answered_ids(partial_path)
         info["resumed_answers"] = len(done)
+        if dropped:
+            info["dropped_incomplete_last_line"] = True  # cut off mid-write; that request is asked again
+        pending = [request for request in requests if request["custom_id"] not in done]
+        check_all_audio(pending)
+        commit = commit_label(info["code_version"])
         served: set[str] = set()
         usage_totals: dict[str, int] = {}
+        answered = rejected = 0
+        info["answered_this_attempt"] = 0
         with partial_path.open("a", encoding="utf-8") as handle:
-            for request in requests:
-                if request["custom_id"] in done:
-                    continue
+            for request in pending:
                 kwargs = request_to_chat_kwargs(request)
-                response = call_with_retries(call, kwargs, sleep=sleep)
+                try:
+                    response = call_with_retries(call, kwargs, sleep=sleep)
+                except Exception as error:  # noqa: BLE001 - only per-request rejections are kept going
+                    if getattr(error, "status_code", None) not in REJECTED_STATUSES:
+                        raise
+                    rejected += 1
+                    log_rejection(rejected_path, request["custom_id"], error)
+                    if answered == 0 and rejected >= MAX_REJECTED_BEFORE_ANY_ANSWER:
+                        raise RuntimeError(
+                            f"The first {rejected} requests were all rejected; this looks like a settings problem, "
+                            f"not one bad song. See {rejected_path}."
+                        ) from error
+                    continue
                 response["sent"] = sent_settings(kwargs)
+                response["code_commit"] = commit
                 handle.write(json.dumps(output_line(request["custom_id"], response)) + "\n")
                 handle.flush()
+                answered += 1
+                info["answered_this_attempt"] = answered
                 served.add(response["model"])
                 for key, value in response["usage"].items():
                     if isinstance(value, int):
                         usage_totals[key] = usage_totals.get(key, 0) + value
+                info["models_served"] = sorted(served)
+                info["usage_totals_this_run"] = usage_totals
         os.replace(partial_path, output_path)
-        info.update({
-            "finished_at": utc_now_iso(),
-            "requests": len(requests),
-            "models_served": sorted(served),
-            "usage_totals_this_run": usage_totals,
-        })
+        info.update({"finished_at": utc_now_iso(), "requests": len(requests), "rejected_this_attempt": rejected})
+        if rejected:
+            print(f"Warning: {rejected} requests were rejected by the API and have no answer; see {rejected_path}",
+                  file=sys.stderr)
         return len(requests)
     except BaseException:
         failure_path.write_text(traceback.format_exc(), encoding="utf-8")
         info["failed_at"] = utc_now_iso()
         raise
     finally:
-        (output_path.parent / RUN_INFO_FILENAME).write_text(json.dumps(info, indent=2), encoding="utf-8")
+        # The latest attempt at the top level, and every attempt (including this one) under "attempts".
+        info_path.write_text(json.dumps({**info, "attempts": [*earlier_attempts, info]}, indent=2), encoding="utf-8")
 
 
-def _read_lines(path: Path) -> list[str]:
-    if not path.is_file():
+def read_attempts(info_path: Path) -> list[dict[str, Any]]:
+    """Earlier attempts recorded in run_info.json (a file from before "attempts" counts as one attempt)."""
+    if not info_path.is_file():
         return []
-    return [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    previous = json.loads(info_path.read_text(encoding="utf-8"))
+    if "attempts" in previous:
+        return previous["attempts"]
+    return [previous]
+
+
+def answered_ids(partial_path: Path) -> tuple[set[str], bool]:
+    """custom_ids already answered in OUT.partial. A last line cut off mid-write is removed (and reported)."""
+    if not partial_path.is_file():
+        return set(), False
+    lines = [line for line in partial_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    ids: set[str] = set()
+    for index, line in enumerate(lines):
+        try:
+            ids.add(json.loads(line)["custom_id"])
+        except json.JSONDecodeError:
+            if index != len(lines) - 1:
+                raise ValueError(f"{partial_path} line {index + 1} is not valid JSON; it was not the last line, "
+                                 "so it was not cut off by a stop. Check the file.") from None
+            partial_path.write_text("".join(kept + "\n" for kept in lines[:-1]), encoding="utf-8")
+            return ids, True
+    return ids, False
+
+
+def log_rejection(path: Path, custom_id: str, error: BaseException) -> None:
+    with path.open("a", encoding="utf-8") as handle:
+        record = {"custom_id": custom_id, "status_code": getattr(error, "status_code", None),
+                  "error": str(error), "at": utc_now_iso()}
+        handle.write(json.dumps(record) + "\n")
 
 
 # --- launcher: same interface as VertexBatchClient -------------------------------
@@ -324,11 +427,13 @@ class QwenApiClient:
         try:
             run(Path(input_jsonl_uri), output_dir / OUTPUT_FILENAME, call=self.call)
             status = "JOB_STATE_SUCCEEDED"
-        except Exception as error:  # noqa: BLE001 - recorded in the registry and run_failed.txt
+        except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - recorded in the registry and run_failed.txt
+            # Ctrl-C included: the experiment must still reach the registry, or its paid answers are never collected.
+            reason = "interrupted (Ctrl-C)" if isinstance(error, KeyboardInterrupt) else str(error)
             print(
-                f"Qwen run stopped: {error}\nDetails: {output_dir / FAILURE_FILENAME}\n"
-                f"Answers so far are kept. Resume with:\n  python -m qwen_api run --requests {input_jsonl_uri} "
-                f"--output {output_dir / OUTPUT_FILENAME}\nthen run collect-results.",
+                f"Qwen run stopped: {reason}\nDetails: {output_dir / FAILURE_FILENAME}\n"
+                f"Answers so far are kept. Resume with:\n  {resume_command(input_jsonl_uri, output_dir / OUTPUT_FILENAME)}"
+                "\nthen run collect-results.",
                 file=sys.stderr,
             )
             status = STOPPED
@@ -352,7 +457,13 @@ class QwenApiClient:
         return job_id
 
     def download_job_output_text(self, batch_job: Any, output_uri_prefix: str | None = None) -> str:
-        return (Path(output_uri_prefix or "") / OUTPUT_FILENAME).read_text(encoding="utf-8")
+        output_dir = Path(output_uri_prefix or "")
+        rejected = output_dir / REJECTED_FILENAME
+        if rejected.is_file():
+            count = sum(1 for line in rejected.read_text(encoding="utf-8").splitlines() if line.strip())
+            print(f"Warning: {count} requests in {output_dir.parent.name} were rejected by the API and have no "
+                  f"results row; see {rejected}", file=sys.stderr)
+        return (output_dir / OUTPUT_FILENAME).read_text(encoding="utf-8")
 
     def job_is_finished(self, status: str) -> bool:
         return status == "JOB_STATE_SUCCEEDED"
