@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from parser import NOT_RECORDED, load_request_metadata_index, parse_output_jsonl_text, save_parsed_results_csv
@@ -39,7 +41,12 @@ def run_collect_results(
         if record.backend in ("", "vertex"):
             status = client.get_job_status(record.job_id)
         else:
-            status = client.get_job_status(record.job_id, record.output_uri_prefix)
+            try:
+                status = client.get_job_status(record.job_id, record.output_uri_prefix)
+            except (OSError, subprocess.CalledProcessError) as error:
+                # e.g. a Slurm job checked on a machine without sacct: skip it, collect the rest.
+                print(f"Skipped {record.experiment_id}: could not check its status ({error})", file=sys.stderr)
+                continue
         update_job_status(registry_path, record.job_id, status)
 
         if not client.job_is_finished(status):

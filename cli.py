@@ -112,6 +112,13 @@ def main() -> None:
         for flag, value in (("--dataset-dir", args.dataset_dir), ("--backend-config", args.backend_config)):
             if not value:
                 parser.error(f"{flag} is required with --backend music-flamingo")
+        for flag, value in (
+            ("--model", args.model),  # the model comes from --backend-config
+            ("--dataset-uri", args.dataset_uri),
+            ("--output-uri-prefix", args.output_uri_prefix),
+        ):
+            if value:
+                parser.error(f"{flag} is not used with --backend music-flamingo; remove it")
     elif args.command in {"submit-experiment", "submit-text-experiment"}:
         if not project:
             parser.error("--project is required, or set GOOGLE_CLOUD_PROJECT")
@@ -123,6 +130,9 @@ def main() -> None:
             ):
                 if not value:
                     parser.error(f"{flag} is required with --backend vertex")
+            for flag, value in (("--dataset-dir", args.dataset_dir), ("--backend-config", args.backend_config)):
+                if value:
+                    parser.error(f"{flag} is not used with --backend vertex; remove it")
 
     if args.command in {"submit-experiment", "submit-text-experiment"}:
         if not 0.0 <= args.temperature <= 2.0:
@@ -130,7 +140,7 @@ def main() -> None:
         if args.top_p is not None and not 0.0 < args.top_p <= 1.0:
             parser.error("--top-p must be greater than 0.0 and at most 1.0")
         if args.top_p is not None and args.temperature == 0.0:
-            parser.error("--top-p has no effect with --temperature 0 (greedy decoding); omit it")
+            parser.error("--top-p cannot be combined with --temperature 0; omit it")
         if args.seed is not None and not (
             -(2**31) <= args.seed and args.seed + args.trials - 1 <= 2**31 - 1
         ):

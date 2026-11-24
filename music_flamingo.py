@@ -79,8 +79,11 @@ def request_to_conversation(
                     )
                 content.append({"type": "text", "text": part["text"]})
     generation = body.get("generationConfig", {})
+    if "temperature" not in generation:
+        # No default temperature is defined for Music Flamingo; refuse rather than invent one.
+        raise ValueError(f"Request {request.get('custom_id')!r} has no temperature; Music Flamingo needs one.")
     conversation = [{"role": "user", "content": content}]
-    return conversation, float(generation.get("temperature", 1.0)), generation.get("seed"), generation.get("topP")
+    return conversation, float(generation["temperature"]), generation.get("seed"), generation.get("topP")
 
 
 def output_line(custom_id: str, text: str) -> dict[str, Any]:

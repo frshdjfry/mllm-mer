@@ -111,7 +111,7 @@ Generation settings (both submit commands):
 - `--top-p P` (optional, 0 < P <= 1) samples only from the most likely
   tokens whose probabilities add up to P (nucleus sampling). Omitted, it is
   not sent and the model's own default applies. Not allowed with
-  `--temperature 0`, which is greedy decoding (always the most likely token).
+  `--temperature 0`.
 - `--seed N` (optional) makes sampling best-effort reproducible: trial `i`
   uses seed `N + i`, so trials still differ from each other but a re-run
   with the same `N` should repeat them. Google does not guarantee identical

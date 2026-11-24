@@ -12,6 +12,7 @@ Job ids in the registry are `local:<output dir>` or `slurm:<job id>`.
 
 from __future__ import annotations
 
+import re
 import shlex
 import shutil
 import subprocess
@@ -26,15 +27,24 @@ REPO_DIR = Path(__file__).resolve().parent
 OUTPUT_FILENAME = "raw_output.jsonl"
 
 # Slurm job states (sacct) -> the JOB_STATE_* names used by the registry.
+# Only the states listed as failed end a job; anything else (suspended,
+# preempted, being requeued, or a state added in a later Slurm) is checked
+# again on the next collect-results, so a job that resumes is not lost.
 _SLURM_STATES = {
     "PENDING": "JOB_STATE_PENDING",
     "CONFIGURING": "JOB_STATE_PENDING",
     "REQUEUED": "JOB_STATE_PENDING",
+    "REQUEUE_FED": "JOB_STATE_PENDING",
+    "REQUEUE_HOLD": "JOB_STATE_PENDING",
+    "RESV_DEL_HOLD": "JOB_STATE_PENDING",
     "RUNNING": "JOB_STATE_RUNNING",
     "COMPLETING": "JOB_STATE_RUNNING",
+    "STAGE_OUT": "JOB_STATE_RUNNING",
     "COMPLETED": "JOB_STATE_SUCCEEDED",
     "CANCELLED": "JOB_STATE_CANCELLED",
 }
+_SLURM_FAILED = {"FAILED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL", "BOOT_FAIL", "DEADLINE", "REVOKED"}
+_NOT_FINISHED = "JOB_STATE_PAUSED"  # suspended, preempted, stopped or unknown: not finished, check again
 _FINISHED = {"JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED"}
 
 
@@ -69,7 +79,9 @@ class LocalGpuClient:
             from music_flamingo import load_config
 
             python = (load_config(self.config_path).get("local") or {}).get("python") or sys.executable
-            result = subprocess.run(self.runner_command(input_jsonl_uri, output_dir, python))
+            # Run from the repository, as the Slurm script does, so `-m music_flamingo` is found
+            # whatever folder the CLI was started from.
+            result = subprocess.run(self.runner_command(input_jsonl_uri, output_dir, python), cwd=REPO_DIR)
             status = "JOB_STATE_SUCCEEDED" if result.returncode == 0 else "JOB_STATE_FAILED"
             job_id = f"local:{output_dir.resolve()}"
         else:
@@ -133,20 +145,29 @@ class LocalGpuClient:
             if not slurm.get(key):
                 raise ValueError(f"Backend config is missing slurm.{key}")
         log_path = (output_dir.parent / "slurm-%j.out").resolve()
+        if re.search(r"\s", str(log_path)):
+            # #SBATCH lines split at spaces, so the log would go elsewhere or sbatch would reject the script.
+            raise ValueError(
+                f"Slurm cannot use a path with spaces: {log_path}. "
+                "Rename the dataset folder (or --artifacts-root) without spaces."
+            )
+        # Letters, digits, '.', '_' and '-' only: anything else could break the #SBATCH line.
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", job_name)[:64]
         # A missing gres means one GPU; an explicit null/empty gres means a CPU-only job.
         gres = slurm.get("gres", "gpu:1")
         lines = [
             "#!/bin/bash",
-            f"#SBATCH -J {job_name[:64]}",
+            f"#SBATCH -J {safe_name}",
             f"#SBATCH --account {slurm['account']}",
             f"#SBATCH -p {slurm['partition']}",
             "#SBATCH --nodes 1",
             *([f"#SBATCH --gres={gres}"] if gres else []),
             f"#SBATCH --time={slurm['time']}",
             f"#SBATCH --output={log_path}",
-            *[f"#SBATCH {option}" for option in slurm.get("extra_sbatch", [])],
+            # `or`: a key left empty in YAML is null, not missing.
+            *[f"#SBATCH {option}" for option in slurm.get("extra_sbatch") or []],
             "set -euo pipefail",
-            str(slurm.get("setup", "")).rstrip(),
+            str(slurm.get("setup") or "").rstrip(),
         ]
         hf_home = (config.get("runtime") or {}).get("hf_home")
         if hf_home:
@@ -178,4 +199,6 @@ def parse_sacct_state(stdout: str) -> str:
         return "JOB_STATE_PENDING"  # not yet visible to sacct
     # e.g. "CANCELLED by 12345" -> "CANCELLED"
     state = lines[0].split()[0].rstrip("+")
-    return _SLURM_STATES.get(state, "JOB_STATE_FAILED")
+    if state in _SLURM_FAILED:
+        return "JOB_STATE_FAILED"
+    return _SLURM_STATES.get(state, _NOT_FINISHED)

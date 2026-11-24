@@ -68,6 +68,7 @@ class MusicFlamingoBackendTest(unittest.TestCase):
 
     def fake_local_run(self, command, *args, **kwargs):
         """Replace the GPU subprocess with an in-process run using the fake model."""
+        self.local_run_cwd = kwargs.get("cwd")
         requests = Path(command[command.index("--requests") + 1])
         output = Path(command[command.index("--output") + 1])
         music_flamingo.run(requests, output, music_flamingo.load_config(self.config), generate=fake_generate)
@@ -97,6 +98,7 @@ class MusicFlamingoBackendTest(unittest.TestCase):
                 registry_path=self.registry, local_artifacts_root=self.artifacts,
                 backend_config=str(self.config), launcher="local", temperature=1.0, base_seed=10, top_p=0.9,
             )
+        self.assertEqual(self.local_run_cwd, local_backend.REPO_DIR)  # `-m music_flamingo` found from any folder
         record = read_registry(self.registry)[0]
         self.assertEqual(record.backend, "music-flamingo")
         self.assertEqual(record.model, "nvidia/music-flamingo-hf@e560c33247f20e2f735c87ce9adebb8e53befe69")
@@ -156,7 +158,8 @@ class MusicFlamingoBackendTest(unittest.TestCase):
             raise RuntimeError("CUDA out of memory")
 
         requests = self.tmp / "r.jsonl"
-        requests.write_text(json.dumps({"custom_id": "c", "request": {"contents": [{"parts": [{"text": "t"}]}]}}) + "\n")
+        requests.write_text(json.dumps({"custom_id": "c", "request": {"contents": [{"parts": [{"text": "t"}]}],
+                                                               "generationConfig": {"temperature": 1.0}}}) + "\n")
         output = self.tmp / "res" / "raw_output.jsonl"
         with self.assertRaises(RuntimeError):
             music_flamingo.run(requests, output, music_flamingo.load_config(self.config), generate=broken)
@@ -183,8 +186,12 @@ class MusicFlamingoBackendTest(unittest.TestCase):
         self.assertEqual(parse("RUNNING\n"), "JOB_STATE_RUNNING")
         self.assertEqual(parse("COMPLETED\n"), "JOB_STATE_SUCCEEDED")
         self.assertEqual(parse("CANCELLED by 1234\n"), "JOB_STATE_CANCELLED")
-        for failed in ("FAILED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL"):
+        for failed in ("FAILED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL", "BOOT_FAIL", "DEADLINE"):
             self.assertEqual(parse(failed), "JOB_STATE_FAILED")
+        # Paused, preempted or unknown states are not the end of the job: collect checks again later.
+        for paused in ("SUSPENDED", "PREEMPTED", "STOPPED", "RESIZING", "SOME_FUTURE_STATE"):
+            self.assertFalse(client.job_is_finished(parse(paused)), paused)
+        self.assertEqual(parse("REQUEUE_HOLD"), "JOB_STATE_PENDING")
         # Slurm says COMPLETED but the runner wrote no output -> not a success.
         with mock.patch.object(local_backend.LocalGpuClient, "_sacct_state", return_value="JOB_STATE_SUCCEEDED"):
             self.assertEqual(client.get_job_status("slurm:4242", str(out)), "JOB_STATE_RUNNING")
@@ -195,6 +202,56 @@ class MusicFlamingoBackendTest(unittest.TestCase):
         script = client.slurm_script("cpu-test", self.tmp / "requests.jsonl", self.tmp / "results")
         self.assertNotIn("--gres", script)
         self.assertIn("#SBATCH --account test-account", script)
+
+    def test_slurm_script_with_empty_yaml_keys_and_unsafe_names(self) -> None:
+        # `setup:` and `extra_sbatch:` left empty are null in YAML, not missing.
+        text = self.config.read_text()
+        text = text.replace("  extra_sbatch: []", "  extra_sbatch:")
+        text = text[: text.index("  setup: |")] + "  setup:\n"
+        self.config.write_text(text)
+        client = local_backend.LocalGpuClient(self.config, launcher="slurm")
+        script = client.slurm_script("EMMA clips__p;rm -rf x", self.tmp / "requests.jsonl", self.tmp / "results")
+        self.assertNotIn("None", script)
+        self.assertIn("#SBATCH -J EMMA_clips__p_rm_-rf_x\n", script)
+        spaced = self.tmp / "EMMA clips" / "results"
+        with self.assertRaisesRegex(ValueError, "spaces"):
+            client.slurm_script("x", self.tmp / "requests.jsonl", spaced)
+
+    def test_collect_skips_a_job_whose_status_cannot_be_checked(self) -> None:
+        fake_subprocess = types.SimpleNamespace(run=self.fake_local_run, CompletedProcess=subprocess.CompletedProcess)
+        with mock.patch.object(local_backend, "subprocess", fake_subprocess):
+            local_id = run_submit_local_experiment(
+                dataset_dir=str(self.audio), prompt_spec_path=str(self.prompt), trials=1,
+                registry_path=self.registry, local_artifacts_root=self.artifacts,
+                backend_config=str(self.config), launcher="local", temperature=1.0,
+            )
+        from registry import append_registry_record
+        slurm_record = read_registry(self.registry)[0]
+        slurm_record.job_id, slurm_record.experiment_id = "slurm:99", "slurm-exp"
+        append_registry_record(self.registry, slurm_record)
+        # Put the Slurm job first, so a crash on it would stop the local one being collected.
+        from registry import write_registry
+        records = read_registry(self.registry)
+        write_registry(self.registry, [records[1], records[0]])
+        stderr = io.StringIO()
+        with mock.patch.object(local_backend.LocalGpuClient, "_sacct_state", side_effect=FileNotFoundError("sacct")), \
+                redirect_stderr(stderr):
+            collected = run_collect_results(self.registry, self.artifacts, project=None, location="global")
+        self.assertEqual(collected, [local_id])
+        self.assertIn("Skipped slurm-exp", stderr.getvalue())
+        self.assertNotEqual(read_registry(self.registry)[0].result_collected, "true")  # still pending
+
+    def test_request_without_temperature_is_refused(self) -> None:
+        request = {"custom_id": "x", "request": {"contents": [{"role": "user", "parts": [{"text": "Rate it."}]}]}}
+        with self.assertRaisesRegex(ValueError, "no temperature"):
+            music_flamingo.request_to_conversation(request)
+
+    def test_new_untracked_code_counts_as_uncommitted(self) -> None:
+        from provenance import has_uncommitted_code
+        self.assertFalse(has_uncommitted_code(""))
+        self.assertFalse(has_uncommitted_code("?? notes.txt\n?? work/x.wav"))
+        self.assertTrue(has_uncommitted_code("?? new_backend.py"))
+        self.assertTrue(has_uncommitted_code(" M cli.py"))
 
     def test_inputs_are_cast_to_the_model_dtype(self) -> None:
         # Regression: on the GPU, float32 audio features met bfloat16 weights and generate() failed.
@@ -228,7 +285,13 @@ class MusicFlamingoBackendTest(unittest.TestCase):
              "--dataset-uri is required"),
             (["submit-experiment", "--backend", "music-flamingo", "--dataset-dir", "d", "--prompt-spec", "p",
               "--backend-config", "c", "--trials", "1", "--temperature", "0", "--top-p", "0.9"],
-             "--top-p has no effect with --temperature 0"),
+             "--top-p cannot be combined with --temperature 0"),
+            (["submit-experiment", "--backend", "music-flamingo", "--dataset-dir", "d", "--prompt-spec", "p",
+              "--backend-config", "c", "--trials", "1", "--model", "other"],
+             "--model is not used with --backend music-flamingo"),
+            (["submit-experiment", "--prompt-spec", "p", "--trials", "1", "--project", "x", "--dataset-uri", "gs://b",
+              "--model", "m", "--output-uri-prefix", "gs://o", "--backend-config", "c"],
+             "--backend-config is not used with --backend vertex"),
         ]
         for argv, message in cases:
             stderr = io.StringIO()

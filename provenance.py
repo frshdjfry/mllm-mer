@@ -21,10 +21,18 @@ def code_version() -> dict[str, Any]:
         return {
             "commit": git("rev-parse", "HEAD"),
             "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
-            "uncommitted_changes": bool(git("status", "--porcelain", "--untracked-files=no")),
+            "uncommitted_changes": has_uncommitted_code(git("status", "--porcelain", "--untracked-files=all")),
         }
     except (OSError, subprocess.CalledProcessError):
         return {"commit": "unknown (not a git checkout)"}
+
+
+def has_uncommitted_code(porcelain_status: str) -> bool:
+    """Changed tracked files, or new Python files not yet committed (which a run may import)."""
+    for line in porcelain_status.splitlines():
+        if not line.startswith("??") or line.endswith(".py"):
+            return True
+    return False
 
 
 def sha256_file(path: str | Path, chunk_size: int = 1 << 20) -> str:
