@@ -65,3 +65,28 @@ without notice:
   Any run that uses them deviates from this decision and must be logged here.
 - These are shared CLI and backend files. Make the change on top of `master`
   after the pending backend PRs are merged, not only on `qwen-backend`.
+
+## 2026-11-24 — Open-weight models run at their own published generation settings
+
+**Status:** agreed. The runner supports it now (requests without a
+temperature); the CLI still always sends one until the vendor-defaults change
+above is made.
+
+**Decision.** For open-weight models that we run ourselves (Music Flamingo),
+mllm-mer chooses no decoding settings. When a request has no temperature,
+the model uses the generation settings its developers publish with the
+weights (`generation_config.json`).
+
+**Why.** This is the same principle as for closed models: each model runs as
+its developers intend, not at a value we picked. An open model has no vendor
+API to apply defaults, so its published settings file plays that role.
+
+**What it means for Music Flamingo.** At the pinned revision
+(`nvidia/music-flamingo-hf@e560c33247f20e2f735c87ce9adebb8e53befe69`), the
+file sets no sampling options, so the Hugging Face software uses greedy
+decoding (checked 2026-11-24). Its `max_new_tokens` (2048) is overridden by
+our backend config (1024). The settings actually used are recorded per run in
+`results/run_info.json` (`effective_generation_config`, key `model_default`).
+
+**Note.** The model card's own example (as quoted in our README, not rechecked) samples at temperature 0.7 and top_p
+0.9. That example is not the published default, so we don't follow it.
