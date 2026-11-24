@@ -5,25 +5,32 @@ import os
 from pathlib import Path
 
 from collect import run_collect_results, run_rebuild_results
-from submit import BACKENDS, run_submit_experiment, run_submit_local_experiment, run_submit_text_experiment
+from submit import (
+    BACKENDS,
+    run_submit_experiment,
+    run_submit_local_experiment,
+    run_submit_qwen_experiment,
+    run_submit_text_experiment,
+)
 
 DEFAULT_REGISTRY_PATH = Path("outputs/registry/experiments_registry.csv")
 DEFAULT_ARTIFACTS_ROOT = Path("outputs/experiments")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run audio LLM experiments (Gemini on Vertex AI, or Music Flamingo on a local/Slurm GPU).")
+    parser = argparse.ArgumentParser(description="Run audio LLM experiments (Gemini on Vertex AI, Music Flamingo on a local/Slurm GPU, or Qwen Omni on Model Studio).")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     submit_parser = subparsers.add_parser("submit-experiment", help="Create and submit a batch experiment.")
     submit_parser.add_argument(
         "--backend", choices=BACKENDS, default="vertex",
-        help="vertex = Gemini batch on Vertex AI (default); music-flamingo = local GPU or Slurm",
+        help="vertex = Gemini batch on Vertex AI (default); music-flamingo = local GPU or Slurm; "
+        "qwen = Qwen Omni via Alibaba Cloud Model Studio (key in .env)",
     )
     submit_parser.add_argument("--dataset-uri", help="[vertex] GCS dataset URI such as gs://bucket/prefix")
-    submit_parser.add_argument("--dataset-dir", help="[music-flamingo] local folder of audio files")
+    submit_parser.add_argument("--dataset-dir", help="[music-flamingo, qwen] local folder of audio files")
     submit_parser.add_argument("--prompt-spec", required=True, help="Path to YAML prompt spec file")
-    submit_parser.add_argument("--model", help="[vertex] Vertex model resource name")
+    submit_parser.add_argument("--model", help="[vertex] Vertex model resource name; [qwen] e.g. qwen3.5-omni-plus")
     submit_parser.add_argument("--trials", required=True, type=int, help="Number of trials per file/prompt")
     submit_parser.add_argument("--output-uri-prefix", help="[vertex] GCS prefix for batch inputs/outputs")
     submit_parser.add_argument("--backend-config", help="[music-flamingo] backend config YAML (model, Slurm)")
@@ -119,6 +126,17 @@ def main() -> None:
         ):
             if value:
                 parser.error(f"{flag} is not used with --backend music-flamingo; remove it")
+    elif args.command == "submit-experiment" and backend == "qwen":
+        for flag, value in (("--dataset-dir", args.dataset_dir), ("--model", args.model)):
+            if not value:
+                parser.error(f"{flag} is required with --backend qwen")
+        for flag, value in (
+            ("--dataset-uri", args.dataset_uri),
+            ("--output-uri-prefix", args.output_uri_prefix),
+            ("--backend-config", args.backend_config),
+        ):
+            if value:
+                parser.error(f"{flag} is not used with --backend qwen; remove it")
     elif args.command in {"submit-experiment", "submit-text-experiment"}:
         if not project:
             parser.error("--project is required, or set GOOGLE_CLOUD_PROJECT")
@@ -158,6 +176,21 @@ def main() -> None:
             local_artifacts_root=artifacts_root,
             backend_config=args.backend_config,
             launcher=args.launcher,
+            temperature=args.temperature,
+            base_seed=args.seed,
+            top_p=args.top_p,
+        )
+        print(experiment_id)
+        return
+
+    if args.command == "submit-experiment" and backend == "qwen":
+        experiment_id = run_submit_qwen_experiment(
+            dataset_dir=args.dataset_dir,
+            prompt_spec_path=args.prompt_spec,
+            model=args.model,
+            trials=args.trials,
+            registry_path=registry_path,
+            local_artifacts_root=artifacts_root,
             temperature=args.temperature,
             base_seed=args.seed,
             top_p=args.top_p,

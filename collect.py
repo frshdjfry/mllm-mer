@@ -28,6 +28,10 @@ def run_collect_results(
                 if not project:
                     raise ValueError("--project (or GOOGLE_CLOUD_PROJECT) is needed to collect Vertex jobs.")
                 clients[backend] = VertexBatchClient(project=project, location=location)
+            elif backend == "qwen":
+                from qwen_api import QwenApiClient
+
+                clients[backend] = QwenApiClient()
             else:
                 from local_backend import LocalGpuClient
 
@@ -129,6 +133,14 @@ def run_provenance(backend: str, experiment_dir: Path) -> dict[str, str]:
             "settings_source": "as sent; Vertex does not report the settings used",
             "code_commit": commit,
             "hardware": "google_hosted",
+        }
+    if backend == "qwen":
+        return {
+            "backend": backend,
+            "model_served": "",  # read per line from the model name Model Studio returned
+            "settings_source": "as sent; see raw_output.jsonl (qwen.sent) and results/run_info.json",
+            "code_commit": commit,
+            "hardware": "alibaba_hosted",
         }
     gpu = info.get("gpu")
     return {

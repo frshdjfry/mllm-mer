@@ -21,7 +21,7 @@ from request_builder import build_requests, save_request_metadata_csv, save_requ
 from schemas import BatchJobRecord, ExperimentSpec, InputRecord, utc_now_iso
 from vertex_batch import VertexBatchClient
 
-BACKENDS = ("vertex", "music-flamingo")
+BACKENDS = ("vertex", "music-flamingo", "qwen")
 
 
 def run_submit_experiment(
@@ -91,6 +91,42 @@ def run_submit_local_experiment(
         top_p=top_p,
         backend="music-flamingo",
         client=LocalGpuClient(backend_config, launcher),
+    )
+
+
+def run_submit_qwen_experiment(
+    dataset_dir: str,
+    prompt_spec_path: str,
+    model: str,
+    trials: int,
+    registry_path: Path,
+    local_artifacts_root: Path,
+    temperature: float = 1.0,
+    base_seed: int | None = None,
+    top_p: float | None = None,
+    client=None,
+) -> str:
+    """Qwen Omni through Model Studio: local audio, sent inline; runs now, in this process."""
+    from qwen_api import QwenApiClient
+
+    input_records = list_local_audio_records(dataset_dir)
+    return run_submit_common(
+        input_source=str(Path(dataset_dir).resolve()),
+        dataset_id=dataset_id_from_local_dir(dataset_dir),
+        input_records=input_records,
+        prompt_spec_path=prompt_spec_path,
+        model=model,
+        trials=trials,
+        output_uri_prefix="",
+        registry_path=registry_path,
+        local_artifacts_root=local_artifacts_root,
+        project="",
+        location="",
+        temperature=temperature,
+        base_seed=base_seed,
+        top_p=top_p,
+        backend="qwen",
+        client=client or QwenApiClient(),
     )
 
 
@@ -178,12 +214,7 @@ def run_submit_common(
         top_p=top_p,
         backend=backend,
         code_version=code_version(),
-        unset_generation_settings=(
-            ("top_p, " if top_p is None else "")
-            + "top_k, max_output_tokens: Vertex/Gemini defaults (not sent); see modelVersion in raw output"
-            if backend == "vertex"
-            else "see results/run_info.json (effective_generation_config)"
-        ),
+        unset_generation_settings=unset_generation_settings(backend, top_p),
     )
     save_json(experiment_spec.to_dict(), experiment_dir / "experiment_spec.json")
     save_prompt_instances(prompt_instances, experiment_dir / "prompt_instances.json")
@@ -240,6 +271,20 @@ def run_submit_common(
     )
 
     return experiment_id
+
+
+def unset_generation_settings(backend: str, top_p: float | None) -> str:
+    """Which generation settings were left to the model's defaults (recorded in experiment_spec.json)."""
+    if backend == "vertex":
+        return (
+            ("top_p, " if top_p is None else "")
+            + "top_k, max_output_tokens: Vertex/Gemini defaults (not sent); see modelVersion in raw output"
+        )
+    if backend == "qwen":
+        from qwen_api import NOT_SENT
+
+        return ("top_p, " if top_p is None else "") + NOT_SENT
+    return "see results/run_info.json (effective_generation_config)"
 
 
 def build_experiment_id(dataset_id: str, prompt_id: str) -> str:
