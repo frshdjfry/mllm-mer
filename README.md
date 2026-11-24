@@ -108,17 +108,51 @@ Generation settings (both submit commands):
 
 - `--temperature` (default `1.0`, the Gemini 3 default; Google advises not
   lowering it for Gemini 3 models) is sent with every request.
+- `--top-p P` (optional, 0 < P <= 1) samples only from the most likely
+  tokens whose probabilities add up to P (nucleus sampling). Omitted, it is
+  not sent and the model's own default applies. Not allowed with
+  `--temperature 0`.
 - `--seed N` (optional) makes sampling best-effort reproducible: trial `i`
   uses seed `N + i`, so trials still differ from each other but a re-run
   with the same `N` should repeat them. Google does not guarantee identical
   output.
 
-Each parsed result row records `submitted_at`, `temperature`, `seed` and
+Each parsed result row records `submitted_at`, `temperature`, `top_p`, `seed` and
 `prompt_text_hash` (SHA-256 of the rendered prompt text from the prompt
 spec, as 64 hex characters; any edit to the prompt changes it). For text
 experiments it covers the prompt only, not the transcription appended to
 it. If a model answer or prompt variable uses one of these names, the
 model's value is kept and the run setting is left out of that column.
+
+Every row also has the same provenance columns for both backends, so
+Gemini and Music Flamingo results can be compared in one table:
+
+| Column | Gemini (`vertex`) | Music Flamingo |
+|---|---|---|
+| `backend` | `vertex` | `music-flamingo` |
+| `model_served` | `modelVersion` from that response line | pinned `id@revision` |
+| `settings_source` | `as sent; Vertex does not report the settings used` | `effective; see results/run_info.json` |
+| `code_commit` | commit at submit time | commit the runner ran |
+| `hardware` | `google_hosted` | GPU name (`cpu` without one) |
+
+Unknown values are named, never blank: `not_recorded` (e.g. runs from
+before code commits were recorded), `vertex_default` for a temperature that
+was never sent to Gemini, `not_set` for a seed that was never sent, and
+`vertex_default` / `model_default` for a top_p that was never sent.
+`code_commit` ends in `+uncommitted` if the code had uncommitted changes.
+
+`schema_keys` says whether the answer used the prompt's `response_schema`
+field names. Gemini is forced to use them; Music Flamingo is only asked to,
+and may write e.g. `"joyful activation"` for `joyful_activation`. Keys are
+never renamed: prevent such answers in the prompt (one spelling per field
+name), and check every row that is not `exact` before analysis.
+
+| `schema_keys` | Meaning |
+|---|---|
+| `exact` | every key is a schema name |
+| `missing: …` | schema fields not answered (also when the answer could not be parsed) |
+| `extra: …` | keys not in the schema, kept as returned |
+| `not_checked` | no saved schema, or the answer is not a JSON object |
 
 The registry gains `temperature` and `base_seed` columns. An older registry
 is upgraded on the first submit with this version; after that, older
@@ -128,6 +162,14 @@ Collect finished results:
 
 ```bash
 python cli.py collect-results
+```
+
+After the results table format changes, rebuild the tables of already
+collected jobs from their saved `results/raw_output.jsonl` (the raw output is
+only read, never changed; `created_at` becomes the rebuild time):
+
+```bash
+python cli.py rebuild-results
 ```
 
 Submit a text-only experiment:
@@ -140,6 +182,70 @@ python cli.py submit-text-experiment \
   --trials 2 \
   --output-uri-prefix gs://your-output-bucket/gemini-batch-runs
 ```
+
+## Music Flamingo backend (local GPU or Slurm)
+
+`--backend music-flamingo` runs [NVIDIA Music Flamingo](https://huggingface.co/nvidia/music-flamingo-hf)
+with Hugging Face `transformers` on a GPU you control, using the same prompt
+specs, registry, artifacts and results columns as the Gemini backend. Audio
+is read from a local folder; nothing is uploaded. The model is
+non-commercial-research only (NVIDIA OneWay Noncommercial License).
+
+Requirements where the model runs: a GPU with roughly 40 GB of memory (the
+weights are 16.6 GB) and the pinned environment from
+`requirements-music-flamingo.txt` (`python -m pip install -r requirements-music-flamingo.txt`;
+`transformers` is a development commit, as Music Flamingo needs unreleased code). The machine that
+only submits and collects does not need PyTorch.
+
+1. Copy `config/music_flamingo.cambridge-hpc.example.yaml`, fill in your
+   paths, and keep the pinned `model.revision`. Copies of the example are
+   gitignored.
+2. Submit, as a Slurm job (default) or directly on this machine's GPU:
+
+```bash
+python cli.py submit-experiment --backend music-flamingo \
+  --dataset-dir /path/to/anonymised/audio \
+  --prompt-spec examples/simple_prompt.yaml \
+  --backend-config config/my_music_flamingo.yaml \
+  --trials 3 --seed 0 \
+  --launcher slurm        # or: --launcher local
+```
+
+3. Collect as usual with `python cli.py collect-results`. For Slurm jobs, run
+   it on the cluster, where `sacct` can see the job.
+
+What the model actually receives (checked with the pinned processor):
+- Its chat template always places the audio **before** the text, whatever
+  order the request uses, so `audio_position` has no effect for Music
+  Flamingo. Use `audio_position: before` (default) when comparing with Gemini.
+- The template adds a system message, "You are a helpful assistant.".
+- Audio becomes 25 tokens per second (750 tokens per 30 s window).
+- Prompt text must not contain `<sound>`: it is the model's audio placeholder
+  token and duplicates the audio slot. The runner rejects such prompts.
+
+How it works: `submit-experiment` writes `requests.jsonl` in the same format
+as for Gemini, then the launcher (`local_backend.py`) starts the runner
+(`music_flamingo.py`) directly or writes and `sbatch`-submits
+`slurm_job.sh` from the config. The runner writes `results/raw_output.jsonl`
+in Gemini's batch output shape, plus `run_info.json` (model revision, package
+versions, GPU, timings) or `run_failed.txt` with the error. A request without
+a temperature uses the model's own published generation settings
+(`generation_config.json`, which sets no sampling: greedy decoding); the
+settings actually used are recorded in `run_info.json`
+(`effective_generation_config`). `--temperature 0` also means greedy
+decoding; above 0 samples at that temperature, with `--top-p` if given. The
+model card's sampling example uses temperature 0.7 and top_p 0.9.
+
+The registry gains a `backend` column (`vertex` for existing rows); as with
+the earlier columns, an older registry is upgraded once and older versions of
+this CLI cannot read it afterwards.
+
+Offline tests (no GPU, Slurm or network): `python -m unittest discover -s tests`.
+`tests/test_formats.py` locks every file format against golden files in
+`tests/golden/`; after an intentional format change, regenerate them with
+`UPDATE_GOLDEN=1 python -m unittest tests.test_formats` and review the diff.
+Prompt specs may set `audio_position: before` (default) or `after`, and both
+backends send the parts in that order.
 
 ## Artifacts
 

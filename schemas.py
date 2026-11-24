@@ -38,6 +38,7 @@ class PromptSpec:
     prompt_text: str
     response_schema: dict[str, Any]
     variables: dict[str, list[str]] = field(default_factory=dict)
+    audio_position: str = "before"
 
 
 @dataclass
@@ -47,6 +48,7 @@ class PromptInstance:
     prompt_text: str
     response_schema: dict[str, Any]
     variables: dict[str, str]
+    audio_position: str = "before"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -65,6 +67,10 @@ class ExperimentSpec:
     prompt_instances: list[PromptInstance]
     temperature: float = 1.0
     base_seed: int | None = None
+    top_p: float | None = None
+    backend: str = "vertex"
+    code_version: dict[str, Any] = field(default_factory=dict)
+    unset_generation_settings: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -90,6 +96,8 @@ class RequestItem:
     response_schema: dict[str, Any]
     temperature: float = 1.0
     seed: int | None = None
+    audio_position: str = "before"
+    top_p: float | None = None
 
 
 @dataclass
@@ -108,6 +116,7 @@ class RequestMetadataRow:
     temperature: str = ""
     seed: str = ""
     prompt_text_hash: str = ""
+    top_p: str = ""
 
 
 @dataclass
@@ -125,6 +134,7 @@ class BatchJobRecord:
     trials: int
     temperature: str = ""
     base_seed: str = ""
+    backend: str = "vertex"
 
 
 @dataclass

@@ -35,12 +35,17 @@ def load_prompt_spec(path: str | Path) -> PromptSpec:
             raise ValueError("Templated prompt specs must define variables.")
         validate_template_variables(prompt_text, variables)
 
+    audio_position = data.get("audio_position", "before")
+    if audio_position not in {"before", "after"}:
+        raise ValueError("audio_position must be 'before' or 'after' the prompt text.")
+
     return PromptSpec(
         prompt_id=prompt_id,
         kind=kind,
         prompt_text=prompt_text,
         response_schema=response_schema,
         variables={key: list(value) for key, value in variables.items()},
+        audio_position=audio_position,
     )
 
 
@@ -53,6 +58,7 @@ def expand_prompt_instances(spec: PromptSpec) -> list[PromptInstance]:
                 prompt_text=spec.prompt_text,
                 response_schema=spec.response_schema,
                 variables={},
+                audio_position=spec.audio_position,
             )
         ]
 
@@ -71,6 +77,7 @@ def expand_prompt_instances(spec: PromptSpec) -> list[PromptInstance]:
                 prompt_text=rendered,
                 response_schema=spec.response_schema,
                 variables=variables,
+                audio_position=spec.audio_position,
             )
         )
 

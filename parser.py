@@ -8,7 +8,13 @@ from typing import Any
 from schemas import RequestMetadataRow, utc_now_iso
 
 
-RUN_SETTING_FIELDS = ["submitted_at", "temperature", "seed", "prompt_text_hash"]
+RUN_SETTING_FIELDS = ["submitted_at", "temperature", "top_p", "seed", "prompt_text_hash"]
+# The same columns for every backend, so Gemini and Music Flamingo rows can be
+# compared directly. Unknown values get an explicit marker, never a blank.
+RUN_PROVENANCE_FIELDS = ["backend", "model_served", "settings_source", "code_commit", "hardware"]
+NOT_RECORDED = "not_recorded"
+# Says whether the answer used the prompt's response_schema field names (see check_schema_keys).
+SCHEMA_KEYS_FIELD = "schema_keys"
 
 
 def parse_output_jsonl_text(
@@ -16,7 +22,10 @@ def parse_output_jsonl_text(
     job_id: str,
     request_metadata_index: dict[str, list[RequestMetadataRow]],
     submitted_at: str = "",
+    run_columns: dict[str, str] | None = None,
+    schema_fields: dict[str, list[str]] | None = None,
 ) -> list[dict[str, str]]:
+    """schema_fields maps prompt_instance_id to its response_schema field names."""
     rows: list[dict[str, str]] = []
     created_at = utc_now_iso()
 
@@ -38,6 +47,7 @@ def parse_output_jsonl_text(
                     raw_response_json=raw_response_json,
                     job_id=job_id,
                     created_at=created_at,
+                    schema_fields=(schema_fields or {}).get(metadata_rows[0].prompt_instance_id) if metadata_rows else None,
                 )
             ]
         else:
@@ -52,10 +62,30 @@ def parse_output_jsonl_text(
             )
 
         for row in new_rows:
+            row.setdefault(SCHEMA_KEYS_FIELD, "not_checked")  # answer was not a JSON object
             add_run_settings(row, metadata_rows, submitted_at)
+            if run_columns is not None:
+                add_run_provenance(row, payload, run_columns)
         rows.extend(new_rows)
 
     return rows
+
+
+def add_run_provenance(row: dict[str, str], payload: dict[str, Any], run_columns: dict[str, str]) -> None:
+    # Gemini reports the version that actually answered on every output line;
+    # otherwise fall back to the run-level value (Music Flamingo's pinned revision).
+    response = payload.get("response")
+    served = response.get("modelVersion") if isinstance(response, dict) else None
+    values = {**run_columns, "model_served": served or run_columns.get("model_served") or NOT_RECORDED}
+    for key, value in values.items():
+        row.setdefault(key, value)
+    # Settings that were never sent: say so, instead of leaving a blank.
+    if row.get("temperature") == "" and run_columns.get("backend") == "vertex":
+        row["temperature"] = "vertex_default"
+    if row.get("top_p") == "":
+        row["top_p"] = "vertex_default" if run_columns.get("backend") == "vertex" else "model_default"
+    if row.get("seed") == "":
+        row["seed"] = "not_set"
 
 
 def add_run_settings(
@@ -67,6 +97,7 @@ def add_run_settings(
     settings = {
         "submitted_at": submitted_at,
         "temperature": first.temperature if first else "",
+        "top_p": first.top_p if first else "",
         "seed": first.seed if first else "",
         "prompt_text_hash": first.prompt_text_hash if first else "",
     }
@@ -99,6 +130,8 @@ def collect_fieldnames(rows: list[dict[str, str]]) -> list[str]:
         "job_id",
         "created_at",
         *RUN_SETTING_FIELDS,
+        *RUN_PROVENANCE_FIELDS,
+        SCHEMA_KEYS_FIELD,
     ]
     dynamic_fields: list[str] = []
     seen = set(base_fields)
@@ -131,6 +164,7 @@ def load_request_metadata_index(path: Path) -> dict[str, list[RequestMetadataRow
                 temperature=row.get("temperature", ""),
                 seed=row.get("seed", ""),
                 prompt_text_hash=row.get("prompt_text_hash", ""),
+                top_p=row.get("top_p", ""),
             )
             index.setdefault(metadata_row.request_id, []).append(metadata_row)
     return index
@@ -267,6 +301,7 @@ def build_structured_result_row(
     raw_response_json: str,
     job_id: str,
     created_at: str,
+    schema_fields: list[str] | None = None,
 ) -> dict[str, str]:
     if not metadata_rows:
         row = {
@@ -302,9 +337,29 @@ def build_structured_result_row(
         if metadata_row.variable_name:
             row[metadata_row.variable_name] = metadata_row.variable_value
 
+    row[SCHEMA_KEYS_FIELD] = check_schema_keys(response_json, schema_fields)
     for key, value in response_json.items():
         row[key] = stringify_value(value)
     return row
+
+
+def check_schema_keys(answer: dict[str, Any], schema_fields: list[str] | None) -> str:
+    """Say whether the answer used exactly the schema's field names.
+
+    Gemini is forced to; models without enforced schemas (Music Flamingo) are
+    only asked to. Keys are never renamed: an answer with "joyful activation"
+    for "joyful_activation" is flagged "missing: joyful_activation; extra:
+    joyful activation", so it is found and checked, not silently fixed.
+    """
+    if schema_fields is None:
+        return "not_checked"
+    missing = [field for field in schema_fields if field not in answer]
+    extra = [key for key in answer if key not in schema_fields]
+    notes = [
+        *([f"missing: {', '.join(missing)}"] if missing else []),
+        *([f"extra: {', '.join(extra)}"] if extra else []),
+    ]
+    return "; ".join(notes) or "exact"
 
 
 def stringify_value(value: Any) -> str:

@@ -4,23 +4,33 @@ import argparse
 import os
 from pathlib import Path
 
-from collect import run_collect_results
-from submit import run_submit_experiment, run_submit_text_experiment
+from collect import run_collect_results, run_rebuild_results
+from submit import BACKENDS, run_submit_experiment, run_submit_local_experiment, run_submit_text_experiment
 
 DEFAULT_REGISTRY_PATH = Path("outputs/registry/experiments_registry.csv")
 DEFAULT_ARTIFACTS_ROOT = Path("outputs/experiments")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run Gemini batch experiments on audio files in GCS.")
+    parser = argparse.ArgumentParser(description="Run audio LLM experiments (Gemini on Vertex AI, or Music Flamingo on a local/Slurm GPU).")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     submit_parser = subparsers.add_parser("submit-experiment", help="Create and submit a batch experiment.")
-    submit_parser.add_argument("--dataset-uri", required=True, help="GCS dataset URI such as gs://bucket/prefix")
+    submit_parser.add_argument(
+        "--backend", choices=BACKENDS, default="vertex",
+        help="vertex = Gemini batch on Vertex AI (default); music-flamingo = local GPU or Slurm",
+    )
+    submit_parser.add_argument("--dataset-uri", help="[vertex] GCS dataset URI such as gs://bucket/prefix")
+    submit_parser.add_argument("--dataset-dir", help="[music-flamingo] local folder of audio files")
     submit_parser.add_argument("--prompt-spec", required=True, help="Path to YAML prompt spec file")
-    submit_parser.add_argument("--model", required=True, help="Vertex model resource name")
+    submit_parser.add_argument("--model", help="[vertex] Vertex model resource name")
     submit_parser.add_argument("--trials", required=True, type=int, help="Number of trials per file/prompt")
-    submit_parser.add_argument("--output-uri-prefix", required=True, help="GCS prefix for batch inputs/outputs")
+    submit_parser.add_argument("--output-uri-prefix", help="[vertex] GCS prefix for batch inputs/outputs")
+    submit_parser.add_argument("--backend-config", help="[music-flamingo] backend config YAML (model, Slurm)")
+    submit_parser.add_argument(
+        "--launcher", choices=("local", "slurm"), default="slurm",
+        help="[music-flamingo] run on this machine's GPU, or submit a Slurm job (default)",
+    )
     add_generation_args(submit_parser)
     add_shared_args(submit_parser)
 
@@ -39,6 +49,12 @@ def build_parser() -> argparse.ArgumentParser:
     collect_parser = subparsers.add_parser("collect-results", help="Collect completed batch results.")
     add_shared_args(collect_parser)
 
+    rebuild_parser = subparsers.add_parser(
+        "rebuild-results",
+        help="Rebuild results tables of collected jobs from their saved raw output (raw output is not changed).",
+    )
+    add_shared_args(rebuild_parser)
+
     return parser
 
 
@@ -54,6 +70,13 @@ def add_generation_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=None,
         help="Base seed; trial i uses seed + i. Omit to let the model choose a random seed.",
+    )
+    parser.add_argument(
+        "--top-p",
+        type=float,
+        default=None,
+        help="Nucleus sampling: sample only from the most likely tokens whose probabilities add up to "
+        "this value. Omit to use the model's default (not sent).",
     )
 
 
@@ -84,12 +107,40 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     project = args.project
-    if not project:
-        parser.error("--project is required, or set GOOGLE_CLOUD_PROJECT")
+    backend = getattr(args, "backend", "vertex")
+    if args.command == "submit-experiment" and backend == "music-flamingo":
+        for flag, value in (("--dataset-dir", args.dataset_dir), ("--backend-config", args.backend_config)):
+            if not value:
+                parser.error(f"{flag} is required with --backend music-flamingo")
+        for flag, value in (
+            ("--model", args.model),  # the model comes from --backend-config
+            ("--dataset-uri", args.dataset_uri),
+            ("--output-uri-prefix", args.output_uri_prefix),
+        ):
+            if value:
+                parser.error(f"{flag} is not used with --backend music-flamingo; remove it")
+    elif args.command in {"submit-experiment", "submit-text-experiment"}:
+        if not project:
+            parser.error("--project is required, or set GOOGLE_CLOUD_PROJECT")
+        if args.command == "submit-experiment":
+            for flag, value in (
+                ("--dataset-uri", args.dataset_uri),
+                ("--model", args.model),
+                ("--output-uri-prefix", args.output_uri_prefix),
+            ):
+                if not value:
+                    parser.error(f"{flag} is required with --backend vertex")
+            for flag, value in (("--dataset-dir", args.dataset_dir), ("--backend-config", args.backend_config)):
+                if value:
+                    parser.error(f"{flag} is not used with --backend vertex; remove it")
 
     if args.command in {"submit-experiment", "submit-text-experiment"}:
         if not 0.0 <= args.temperature <= 2.0:
             parser.error("--temperature must be between 0.0 and 2.0")
+        if args.top_p is not None and not 0.0 < args.top_p <= 1.0:
+            parser.error("--top-p must be greater than 0.0 and at most 1.0")
+        if args.top_p is not None and args.temperature == 0.0:
+            parser.error("--top-p cannot be combined with --temperature 0; omit it")
         if args.seed is not None and not (
             -(2**31) <= args.seed and args.seed + args.trials - 1 <= 2**31 - 1
         ):
@@ -97,6 +148,22 @@ def main() -> None:
 
     registry_path = Path(args.registry_path)
     artifacts_root = Path(args.artifacts_root)
+
+    if args.command == "submit-experiment" and backend == "music-flamingo":
+        experiment_id = run_submit_local_experiment(
+            dataset_dir=args.dataset_dir,
+            prompt_spec_path=args.prompt_spec,
+            trials=args.trials,
+            registry_path=registry_path,
+            local_artifacts_root=artifacts_root,
+            backend_config=args.backend_config,
+            launcher=args.launcher,
+            temperature=args.temperature,
+            base_seed=args.seed,
+            top_p=args.top_p,
+        )
+        print(experiment_id)
+        return
 
     if args.command == "submit-experiment":
         experiment_id = run_submit_experiment(
@@ -111,6 +178,7 @@ def main() -> None:
             location=args.location,
             temperature=args.temperature,
             base_seed=args.seed,
+            top_p=args.top_p,
         )
         print(experiment_id)
         return
@@ -128,6 +196,7 @@ def main() -> None:
             location=args.location,
             temperature=args.temperature,
             base_seed=args.seed,
+            top_p=args.top_p,
         )
         print(experiment_id)
         return
@@ -144,6 +213,13 @@ def main() -> None:
                 print(experiment_id)
         else:
             print("No completed jobs were collected.")
+        return
+
+    if args.command == "rebuild-results":
+        rebuilt = run_rebuild_results(registry_path=registry_path, local_artifacts_root=artifacts_root)
+        for experiment_id in rebuilt:
+            print(experiment_id)
+        print(f"Rebuilt {len(rebuilt)} results tables.")
         return
 
     parser.error(f"Unsupported command: {args.command}")

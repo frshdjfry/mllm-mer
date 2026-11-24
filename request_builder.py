@@ -18,6 +18,7 @@ def build_requests(
     trials: int,
     temperature: float = 1.0,
     base_seed: int | None = None,
+    top_p: float | None = None,
 ) -> list[RequestItem]:
     requests: list[RequestItem] = []
 
@@ -46,6 +47,8 @@ def build_requests(
                         response_schema=prompt_instance.response_schema,
                         temperature=temperature,
                         seed=None if base_seed is None else base_seed + trial_index,
+                        audio_position=prompt_instance.audio_position,
+                        top_p=top_p,
                     )
                 )
 
@@ -115,6 +118,7 @@ def run_settings(request: RequestItem) -> dict[str, str]:
         "temperature": str(request.temperature),
         "seed": "" if request.seed is None else str(request.seed),
         "prompt_text_hash": hashlib.sha256(request.prompt_text.encode("utf-8")).hexdigest(),
+        "top_p": "" if request.top_p is None else str(request.top_p),
     }
 
 
@@ -125,6 +129,8 @@ def build_gemini_batch_request_json(request: RequestItem) -> dict[str, Any]:
         "responseSchema": response_schema,
         "temperature": request.temperature,
     }
+    if request.top_p is not None:
+        generation_config["topP"] = request.top_p
     if request.seed is not None:
         generation_config["seed"] = request.seed
     return {
@@ -140,20 +146,15 @@ def build_gemini_batch_request_json(request: RequestItem) -> dict[str, Any]:
 
 def build_contents(request: RequestItem) -> list[dict[str, Any]]:
     if request.source_type == "audio":
-        return [
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "file_data": {
-                            "mime_type": infer_mime_type(request.file_uri),
-                            "file_uri": request.file_uri,
-                        }
-                    },
-                    {"text": request.prompt_text},
-                ],
+        audio_part = {
+            "file_data": {
+                "mime_type": infer_mime_type(request.file_uri),
+                "file_uri": request.file_uri,
             }
-        ]
+        }
+        text_part = {"text": request.prompt_text}
+        parts = [text_part, audio_part] if request.audio_position == "after" else [audio_part, text_part]
+        return [{"role": "user", "parts": parts}]
 
     return [
         {
