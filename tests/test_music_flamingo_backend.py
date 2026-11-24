@@ -241,10 +241,19 @@ class MusicFlamingoBackendTest(unittest.TestCase):
         self.assertIn("Skipped slurm-exp", stderr.getvalue())
         self.assertNotEqual(read_registry(self.registry)[0].result_collected, "true")  # still pending
 
-    def test_request_without_temperature_is_refused(self) -> None:
+    def test_request_without_temperature_uses_the_models_own_settings(self) -> None:
         request = {"custom_id": "x", "request": {"contents": [{"role": "user", "parts": [{"text": "Rate it."}]}]}}
-        with self.assertRaisesRegex(ValueError, "no temperature"):
-            music_flamingo.request_to_conversation(request)
+        _, temperature, seed, top_p = music_flamingo.request_to_conversation(request)
+        self.assertEqual((temperature, seed, top_p), (None, None, None))  # nothing invented
+
+        generate, environment, model = self.fake_hf_generator()
+        generate([{"role": "user", "content": []}], None, None, None)
+        sent = model.generate.call_args.kwargs
+        for chosen in ("temperature", "do_sample", "top_p"):
+            self.assertNotIn(chosen, sent)  # left to generation_config.json
+        self.assertIn("model_default", environment["effective_generation_config"])
+        with self.assertRaisesRegex(ValueError, "without a temperature"):
+            generate([{"role": "user", "content": []}], None, None, 0.9)
 
     def test_new_untracked_code_counts_as_uncommitted(self) -> None:
         from provenance import has_uncommitted_code
@@ -252,6 +261,28 @@ class MusicFlamingoBackendTest(unittest.TestCase):
         self.assertFalse(has_uncommitted_code("?? notes.txt\n?? work/x.wav"))
         self.assertTrue(has_uncommitted_code("?? new_backend.py"))
         self.assertTrue(has_uncommitted_code(" M cli.py"))
+
+    def fake_hf_generator(self):
+        """build_hf_generator with fake torch/transformers; returns (generate, environment, model)."""
+        class GenerationConfig:
+            def update(self, **kwargs): pass
+            def to_dict(self): return {}
+
+        model = mock.MagicMock(device="cuda:0", dtype="bf16", generation_config=GenerationConfig())
+        processor = mock.MagicMock()
+        processor.batch_decode.return_value = ['{"joy": 1}']
+        fake_torch = types.SimpleNamespace(
+            bfloat16="bf16", manual_seed=mock.Mock(), __version__="test",
+            version=types.SimpleNamespace(cuda=""), cuda=types.SimpleNamespace(is_available=lambda: False),
+        )
+        fake_transformers = types.SimpleNamespace(
+            __version__="test",
+            AutoProcessor=types.SimpleNamespace(from_pretrained=lambda *a, **k: processor),
+            AudioFlamingo3ForConditionalGeneration=types.SimpleNamespace(from_pretrained=lambda *a, **k: model),
+        )
+        with mock.patch.dict(sys.modules, {"torch": fake_torch, "transformers": fake_transformers}):
+            generate, environment = music_flamingo.build_hf_generator(music_flamingo.load_config(self.config))
+        return generate, environment, model
 
     def test_inputs_are_cast_to_the_model_dtype(self) -> None:
         # Regression: on the GPU, float32 audio features met bfloat16 weights and generate() failed.

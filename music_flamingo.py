@@ -28,8 +28,8 @@ from typing import Any
 from provenance import code_version
 from schemas import utc_now_iso
 
-# (conversation, temperature, seed, top_p) -> generated text
-GenerateFn = Callable[[list[dict[str, Any]], float, "int | None", "float | None"], str]
+# (conversation, temperature, seed, top_p) -> generated text; temperature None = the model's own settings
+GenerateFn = Callable[[list[dict[str, Any]], "float | None", "int | None", "float | None"], str]
 
 FAILURE_FILENAME = "run_failed.txt"
 RUN_INFO_FILENAME = "run_info.json"
@@ -62,7 +62,7 @@ def read_requests(path: Path) -> list[dict[str, Any]]:
 
 def request_to_conversation(
     request: dict[str, Any],
-) -> tuple[list[dict[str, Any]], float, int | None, float | None]:
+) -> tuple[list[dict[str, Any]], float | None, int | None, float | None]:
     """Turn one batch request line into a Music Flamingo chat conversation."""
     body = request["request"]
     content: list[dict[str, Any]] = []
@@ -79,11 +79,10 @@ def request_to_conversation(
                     )
                 content.append({"type": "text", "text": part["text"]})
     generation = body.get("generationConfig", {})
-    if "temperature" not in generation:
-        # No default temperature is defined for Music Flamingo; refuse rather than invent one.
-        raise ValueError(f"Request {request.get('custom_id')!r} has no temperature; Music Flamingo needs one.")
     conversation = [{"role": "user", "content": content}]
-    return conversation, float(generation["temperature"]), generation.get("seed"), generation.get("topP")
+    # No temperature in the request: None, so the model's own published settings apply (see generate()).
+    temperature = generation.get("temperature")
+    return conversation, None if temperature is None else float(temperature), generation.get("seed"), generation.get("topP")
 
 
 def output_line(custom_id: str, text: str) -> dict[str, Any]:
@@ -155,12 +154,17 @@ def build_hf_generator(config: dict[str, Any]) -> tuple[GenerateFn, dict[str, An
     max_new_tokens = int(generation_cfg.get("max_new_tokens", 1024))
     effective: dict[str, Any] = {}
 
-    def generate(conversation: list[dict[str, Any]], temperature: float, seed: int | None, top_p: float | None) -> str:
+    def generate(conversation: list[dict[str, Any]], temperature: float | None, seed: int | None, top_p: float | None) -> str:
         inputs = processor.apply_chat_template(
             [conversation], tokenize=True, add_generation_prompt=True, return_dict=True
         ).to(model.device, dtype=model.dtype)  # audio features must match the weights' dtype; token ids are not cast
         kwargs: dict[str, Any] = {"max_new_tokens": max_new_tokens}
-        if temperature > 0:
+        if temperature is None:
+            # Nothing chosen by us: generate() uses the model's own generation_config.json
+            # (decision 2026-11-24, docs/decisions.md). What that means is recorded below.
+            if top_p is not None:
+                raise ValueError("top_p was given without a temperature; give both or neither.")
+        elif temperature > 0:
             kwargs.update(do_sample=True, temperature=temperature)
             if top_p is not None:
                 kwargs["top_p"] = top_p
@@ -168,7 +172,9 @@ def build_hf_generator(config: dict[str, Any]) -> tuple[GenerateFn, dict[str, An
             kwargs.update(do_sample=False)
         if seed is not None:
             torch.manual_seed(seed)
-        key = f"temperature={temperature}" + ("" if top_p is None else f",top_p={top_p}")
+        key = ("model_default" if temperature is None else f"temperature={temperature}") + (
+            "" if top_p is None else f",top_p={top_p}"
+        )
         if key not in effective:
             # Everything generate() will use, including library defaults we did not set.
             config = copy.deepcopy(model.generation_config)

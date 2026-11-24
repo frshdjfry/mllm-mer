@@ -228,9 +228,12 @@ as for Gemini, then the launcher (`local_backend.py`) starts the runner
 (`music_flamingo.py`) directly or writes and `sbatch`-submits
 `slurm_job.sh` from the config. The runner writes `results/raw_output.jsonl`
 in Gemini's batch output shape, plus `run_info.json` (model revision, package
-versions, GPU, timings) or `run_failed.txt` with the error. `--temperature 0`
-means greedy decoding (the model's own default: its generation config sets no
-sampling); above 0 samples at that temperature, with `--top-p` if given. The
+versions, GPU, timings) or `run_failed.txt` with the error. A request without
+a temperature uses the model's own published generation settings
+(`generation_config.json`, which sets no sampling: greedy decoding); the
+settings actually used are recorded in `run_info.json`
+(`effective_generation_config`). `--temperature 0` also means greedy
+decoding; above 0 samples at that temperature, with `--top-p` if given. The
 model card's sampling example uses temperature 0.7 and top_p 0.9.
 
 The registry gains a `backend` column (`vertex` for existing rows); as with
