@@ -123,10 +123,10 @@ class MusicFlamingoBackendTest(unittest.TestCase):
             rows = list(csv.DictReader(handle))
         self.assertEqual(len(rows), 4)  # 2 files x 2 trials
         for row in rows:
-            self.assertEqual(Path(row["file_uri"]).name, row["heard"])  # right audio went with right request
-            self.assertEqual(row["seed"], row["seed_seen"])  # seed reached the model
-            self.assertEqual((row["top_p"], row["top_p_seen"]), ("0.9", "0.9"))  # top_p reached the model
-            self.assertEqual((row["Joy"], row["temperature"]), ("70", "1.0"))
+            self.assertEqual(Path(row["file_uri"]).name, row["answer_heard"])  # right audio went with right request
+            self.assertEqual(row["seed"], row["answer_seed_seen"])  # seed reached the model
+            self.assertEqual((row["top_p"], row["answer_top_p_seen"]), ("0.9", "0.9"))  # top_p reached the model
+            self.assertEqual((row["answer_Joy"], row["temperature"]), ("70", "1.0"))
             self.assertEqual((row["backend"], row["model_served"]), ("music-flamingo", info["model"]))
             self.assertEqual(row["code_commit"].split("+")[0], info["code_version"]["commit"])
             self.assertEqual(row["hardware"], "not_recorded")  # the fake generator reports no GPU

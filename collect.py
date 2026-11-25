@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from parser import NOT_RECORDED, load_request_metadata_index, parse_output_jsonl_text, save_parsed_results_csv
+from parser import NOT_RECORDED, load_audio_sha256, load_request_metadata_index, parse_output_jsonl_text, save_parsed_results_csv
 from registry import mark_job_collected, pending_collection_records, read_registry, update_job_status
 from schemas import BatchJobRecord
 from vertex_batch import VertexBatchClient
@@ -111,6 +111,7 @@ def write_parsed_results(record: BatchJobRecord, local_artifacts_root: Path, out
         submitted_at=record.submitted_at,
         run_columns=run_provenance(record.backend or "vertex", experiment_dir),
         schema_fields=load_schema_fields(experiment_dir / "prompt_instances.json"),
+        audio_sha256=load_audio_sha256(experiment_dir / "input_manifest.json"),
     )
     save_parsed_results_csv(parsed_rows, experiment_dir / "results" / "parsed_long.csv")
     save_parsed_results_csv(parsed_rows, experiment_results_root / f"{record.experiment_id}.csv")

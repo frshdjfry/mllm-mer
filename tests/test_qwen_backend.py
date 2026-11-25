@@ -142,9 +142,9 @@ class QwenBackendTest(QwenTestBase):
         rows = self.results(experiment_id)
         self.assertEqual(len(rows), 4)
         for row in rows:
-            self.assertEqual(Path(row["file_uri"]).name, row["heard"])  # right audio went with right request
-            self.assertEqual(row["seed"], row["seed_seen"])  # seed reached the API
-            self.assertEqual((row["top_p"], row["top_p_seen"]), ("0.9", "0.9"))
+            self.assertEqual(Path(row["file_uri"]).name, row["answer_heard"])  # right audio went with right request
+            self.assertEqual(row["seed"], row["answer_seed_seen"])  # seed reached the API
+            self.assertEqual((row["top_p"], row["answer_top_p_seen"]), ("0.9", "0.9"))
             self.assertEqual((row["backend"], row["model_served"], row["hardware"]), ("qwen", SERVED, "alibaba_hosted"))
             self.assertEqual(row["schema_keys"], "extra: heard, seed_seen, top_p_seen")
         self.assertEqual(sorted(r["seed"] for r in rows), ["10", "10", "11", "11"])
@@ -247,16 +247,16 @@ class QwenBackendTest(QwenTestBase):
         self.assertTrue(raw[0]["response"]["candidates"][0]["content"]["parts"][0]["text"].startswith("```json"))
         self.assertNotIn("response_format", raw[0]["qwen"]["sent"])
         self.assertTrue(fenced["schema_keys"].startswith("missing: " + ", ".join(GEMS_FIELDS)))
-        self.assertEqual(fenced.get("wonder", ""), "")
+        self.assertEqual(fenced.get("answer_wonder", ""), "")
 
         # With JSON mode (what the backend now sends) both models parse cleanly.
         for row, line, model in ((plus, raw[1], "qwen3.5-omni-plus"), (flash, raw[2], "qwen3.8-omni-flash")):
             self.assertEqual(line["qwen"]["sent"]["response_format"], {"type": "json_object"})
             answer = json.loads(line["response"]["candidates"][0]["content"]["parts"][0]["text"])
             self.assertEqual(row["schema_keys"], "exact")
-            self.assertEqual({field: row[field] for field in GEMS_FIELDS}, {f: str(answer[f]) for f in GEMS_FIELDS})
+            self.assertEqual({field: row["answer_" + field] for field in GEMS_FIELDS}, {f: str(answer[f]) for f in GEMS_FIELDS})
             self.assertEqual((row["model_served"], row["backend"]), (model, "qwen"))
-        self.assertEqual((plus["wonder"], flash["wonder"]), ("15.0", "61.0"))
+        self.assertEqual((plus["answer_wonder"], flash["answer_wonder"]), ("15.0", "61.0"))
         self.assertTrue(raw[2]["qwen"]["reasoning"])  # Flash thinks by default; Plus does not
         self.assertEqual(raw[1]["qwen"]["reasoning"], "")
 

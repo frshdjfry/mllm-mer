@@ -290,7 +290,8 @@ def trace_request(request, spec, experiment_dir, saved_requests, saved_answers, 
     step("7", "Parse the answer into a results row (parsed_long.csv)", mer_parser.parse_output_jsonl_text,
          mer_parser.extract_response_json, mer_parser.check_schema_keys, collect.run_provenance,
          what="The parser finds the answer text, reads it as JSON, and makes one row: the request's details, "
-              "one column per field in the answer, the settings, provenance (which model answered, which "
+              "one answer_<field> column per field in the answer (the prefix marks what the model wrote, so it can "
+              "never overwrite our columns), the audio's SHA-256, the settings, provenance (which model answered, which "
               "code commit), and schema_keys: 'exact' if the answer used exactly the schema's field names. "
               "If the text is not valid JSON, the whole response is stored unparsed instead.")
     print(f"\n  answer text the parser reads: "
@@ -300,14 +301,17 @@ def trace_request(request, spec, experiment_dir, saved_requests, saved_answers, 
         request_metadata_index=metadata_index, submitted_at="",
         run_columns=collect.run_provenance("qwen", experiment_dir),
         schema_fields=collect.load_schema_fields(experiment_dir / "prompt_instances.json"),
+        audio_sha256=mer_parser.load_audio_sha256(experiment_dir / "input_manifest.json"),
     )
     row = rows[0]
     show("parsed row", {key: value for key, value in row.items() if key not in ("raw_response_json",)})
     saved = saved_parsed.get((row["file_id"], row["prompt_instance_id"], row["trial_index"]), {})
-    fields = list(request.response_schema)
+    columns = [mer_parser.ANSWER_PREFIX + field for field in request.response_schema]
+    # Tables built before 2026-11-25 have no answer_ prefix; compare with either.
     check("emotion values match the saved parsed_long.csv",
-          all(saved.get(field) == row.get(field) for field in fields),
-          ", ".join(f"{field}={row.get(field)}" for field in fields))
+          all(saved.get(column, saved.get(column.removeprefix(mer_parser.ANSWER_PREFIX))) == row.get(column)
+              for column in columns),
+          ", ".join(f"{column}={row.get(column)}" for column in columns))
 
 
 def trace_gemini_answer(gemini_dir: Path) -> None:
@@ -322,6 +326,7 @@ def trace_gemini_answer(gemini_dir: Path) -> None:
         request_metadata_index=mer_parser.load_request_metadata_index(gemini_dir / "request_metadata.csv"),
         run_columns=collect.run_provenance("vertex", gemini_dir),
         schema_fields=collect.load_schema_fields(gemini_dir / "prompt_instances.json"),
+        audio_sha256=mer_parser.load_audio_sha256(gemini_dir / "input_manifest.json"),
     )
     show("parsed row (Gemini)", {key: value for key, value in rows[0].items() if key != "raw_response_json"})
 
