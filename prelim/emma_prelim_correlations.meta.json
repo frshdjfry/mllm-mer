@@ -1,0 +1,51 @@
+{
+  "n_overlap": 168,
+  "n_common": 163,
+  "excluded": {
+    "H022": [
+      "qwen3.5-omni-plus-2026-03-15",
+      "qwen3.8-omni-flash"
+    ],
+    "H047": [
+      "qwen3.8-omni-flash"
+    ],
+    "H119": [
+      "qwen3.5-omni-plus-2026-03-15",
+      "qwen3.8-omni-flash"
+    ],
+    "P004": [
+      "qwen3.8-omni-flash"
+    ],
+    "P098": [
+      "qwen3.8-omni-flash"
+    ]
+  },
+  "answered_per_model": {
+    "gemini-3.8-flash": 168,
+    "gemini-3.1-pro-preview": 168,
+    "qwen3.5-omni-plus-2026-03-15": 166,
+    "qwen3.8-omni-flash": 163
+  },
+  "recovered_from_list": {
+    "gemini-3.8-flash": [],
+    "gemini-3.1-pro-preview": [],
+    "qwen3.5-omni-plus-2026-03-15": [],
+    "qwen3.8-omni-flash": [
+      "H032",
+      "H041",
+      "H105",
+      "H117",
+      "P060",
+      "P087",
+      "P123"
+    ]
+  },
+  "listeners_per_song": {
+    "median": 27.0,
+    "min": 11,
+    "max": 44
+  },
+  "boot_draws": 2000,
+  "split_draws": 500,
+  "seed": 20261125
+}

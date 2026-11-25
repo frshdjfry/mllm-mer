@@ -391,3 +391,14 @@ class QwenReviewFixesTest(QwenTestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ContentInspectionMidStreamTest(unittest.TestCase):
+    def test_mid_stream_content_inspection_counts_as_rejection(self):
+        import qwen_api
+
+        class APIError(Exception):
+            pass
+
+        self.assertTrue(qwen_api.is_rejection(APIError("Output data may contain inappropriate content.")))
+        self.assertFalse(qwen_api.is_rejection(APIError("Connection reset")))

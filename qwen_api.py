@@ -259,6 +259,17 @@ def is_retryable(error: BaseException) -> bool:
     return type(error).__name__ in {"APIConnectionError", "APITimeoutError"}
 
 
+# Alibaba's content inspection can also stop an answer mid-stream; the SDK then raises a
+# plain APIError with no status code. That is a per-song refusal, like HTTP 400.
+CONTENT_INSPECTION_MESSAGE = "inappropriate content"
+
+
+def is_rejection(error: BaseException) -> bool:
+    if getattr(error, "status_code", None) in REJECTED_STATUSES:
+        return True
+    return CONTENT_INSPECTION_MESSAGE in str(error).lower()
+
+
 def call_with_retries(call: CallFn, kwargs: dict[str, Any], sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
@@ -337,7 +348,7 @@ def run(
                 try:
                     response = call_with_retries(call, kwargs, sleep=sleep)
                 except Exception as error:  # noqa: BLE001 - only per-request rejections are kept going
-                    if getattr(error, "status_code", None) not in REJECTED_STATUSES:
+                    if not is_rejection(error):
                         raise
                     rejected += 1
                     log_rejection(rejected_path, request["custom_id"], error)

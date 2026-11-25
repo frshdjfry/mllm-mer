@@ -1,0 +1,7 @@
+# Raw run outputs, registries and logs stay local (copies: ~/mllm-mer-emma-prelim/prelim on Lok Yan's Mac).
+runs/
+smoke/
+retry/
+experiment_results/
+*registry.csv
+*.log

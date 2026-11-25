@@ -1,0 +1,51 @@
+model,dimension,spearman,ci_low,ci_high,n_songs
+gemini-3.8-flash,wonder,0.291,0.137,0.428,163
+gemini-3.8-flash,transcendence,0.200,0.053,0.350,163
+gemini-3.8-flash,tenderness,0.702,0.609,0.775,163
+gemini-3.8-flash,nostalgia,0.559,0.431,0.665,163
+gemini-3.8-flash,peacefulness,0.628,0.521,0.716,163
+gemini-3.8-flash,joyful_activation,0.697,0.599,0.779,163
+gemini-3.8-flash,power,0.698,0.602,0.774,163
+gemini-3.8-flash,sadness,0.664,0.553,0.757,163
+gemini-3.8-flash,tension,0.372,0.222,0.506,163
+gemini-3.8-flash,mean (Fisher z),0.557,0.496,0.614,163
+gemini-3.1-pro-preview,wonder,0.143,-0.011,0.295,163
+gemini-3.1-pro-preview,transcendence,0.096,-0.063,0.258,163
+gemini-3.1-pro-preview,tenderness,0.659,0.560,0.741,163
+gemini-3.1-pro-preview,nostalgia,0.424,0.281,0.551,163
+gemini-3.1-pro-preview,peacefulness,0.480,0.348,0.595,163
+gemini-3.1-pro-preview,joyful_activation,0.553,0.424,0.660,163
+gemini-3.1-pro-preview,power,0.489,0.354,0.604,163
+gemini-3.1-pro-preview,sadness,0.562,0.439,0.670,163
+gemini-3.1-pro-preview,tension,0.402,0.256,0.532,163
+gemini-3.1-pro-preview,mean (Fisher z),0.438,0.370,0.499,163
+qwen3.5-omni-plus-2026-03-15,wonder,0.325,0.182,0.459,163
+qwen3.5-omni-plus-2026-03-15,transcendence,0.323,0.179,0.454,163
+qwen3.5-omni-plus-2026-03-15,tenderness,0.733,0.658,0.793,163
+qwen3.5-omni-plus-2026-03-15,nostalgia,0.463,0.329,0.573,163
+qwen3.5-omni-plus-2026-03-15,peacefulness,0.671,0.565,0.753,163
+qwen3.5-omni-plus-2026-03-15,joyful_activation,0.719,0.624,0.792,163
+qwen3.5-omni-plus-2026-03-15,power,0.660,0.552,0.744,163
+qwen3.5-omni-plus-2026-03-15,sadness,0.619,0.504,0.716,163
+qwen3.5-omni-plus-2026-03-15,tension,0.433,0.291,0.558,163
+qwen3.5-omni-plus-2026-03-15,mean (Fisher z),0.568,0.515,0.616,163
+qwen3.8-omni-flash,wonder,0.404,0.266,0.523,163
+qwen3.8-omni-flash,transcendence,0.300,0.150,0.443,163
+qwen3.8-omni-flash,tenderness,0.736,0.653,0.798,163
+qwen3.8-omni-flash,nostalgia,0.537,0.418,0.638,163
+qwen3.8-omni-flash,peacefulness,0.678,0.582,0.757,163
+qwen3.8-omni-flash,joyful_activation,0.703,0.609,0.777,163
+qwen3.8-omni-flash,power,0.663,0.562,0.740,163
+qwen3.8-omni-flash,sadness,0.620,0.503,0.722,163
+qwen3.8-omni-flash,tension,0.422,0.273,0.557,163
+qwen3.8-omni-flash,mean (Fisher z),0.579,0.529,0.624,163
+human noise ceiling,wonder,0.815,0.732,0.869,163
+human noise ceiling,transcendence,0.682,0.508,0.782,163
+human noise ceiling,tenderness,0.897,0.851,0.928,163
+human noise ceiling,nostalgia,0.901,0.855,0.929,163
+human noise ceiling,peacefulness,0.854,0.792,0.894,163
+human noise ceiling,joyful_activation,0.902,0.856,0.931,163
+human noise ceiling,power,0.891,0.847,0.920,163
+human noise ceiling,sadness,0.835,0.752,0.888,163
+human noise ceiling,tension,0.811,0.723,0.867,163
+human noise ceiling,mean (Fisher z),0.854,0.826,0.871,163

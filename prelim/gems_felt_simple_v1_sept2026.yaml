@@ -1,0 +1,29 @@
+# Exact prompt text and schema of the 2026-09-27 Gemini EMMA runs (copied from their experiment_spec.json).
+prompt_id: gems_felt_simple_v1
+kind: simple
+prompt_text: |
+  Analyse the song below.
+  Infer the ratings for the audio file on nine felt emotional dimensions, where 0 means "not at all" and 100 means "very".
+
+  Return the result only in JSON format with the following fields:
+  - "file_id": file_name
+  - "wonder": wonder (filled with wonder, allured, moved): return a float between 0 and 100.
+  - "transcendence": transcendence (fascinated, overwhelmed, feeling of transcendence): return a float between 0 and 100.
+  - "tenderness": tenderness (affectionate, romantic/tender): return a float between 0 and 100.
+  - "peacefulness": peacefulness (relaxed, calm, soothed): return a float between 0 and 100.
+  - "nostalgia": nostalgia (nostalgic, sentimental, dreamy): return a float between 0 and 100.
+  - "joyful_activation": joyful activation (joyful, animated, bouncy): return a float between 0 and 100.
+  - "power": power (strong, energetic, triumphant): return a float between 0 and 100.
+  - "sadness": sadness (sad, sorrowful, tearful): return a float between 0 and 100.
+  - "tension": tension (tense, irritated, agitated): return a float between 0 and 100.
+response_schema:
+  file_id: string
+  wonder: number
+  transcendence: number
+  tenderness: number
+  peacefulness: number
+  nostalgia: number
+  joyful_activation: number
+  power: number
+  sadness: number
+  tension: number
