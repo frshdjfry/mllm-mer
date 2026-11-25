@@ -4,6 +4,37 @@ Dated record of analysis decisions and the reasons for them. Record each decisio
 before looking at the results it affects. Mark any later change as a deviation
 and give the reason.
 
+## 2026-11-25 — Answer columns get an `answer_` prefix; results gain `audio_sha256`
+
+**Status:** in the code (parser.py).
+
+**Decision.** Every key in a model's JSON answer becomes a column named
+`answer_<key>` (e.g. `answer_wonder`). Our own columns keep their names.
+Prompt variables may not use a results column name or the `answer_` prefix.
+Each row also gets `audio_sha256`, the audio file's checksum from
+`input_manifest.json`.
+
+**Why.**
+- The parser used to copy answer keys into the row under their own names, so
+  an answer could overwrite our columns. The old prompts asked Gemini for a
+  `"file_id"`; its guesses (e.g. `"audio.mp3"`, `"00:00"`) replaced the real
+  `file_id` in every row of 26 Gemini experiments (9,086 of 10,330 rows
+  checked on 2026-11-25; scan of `raw_output.jsonl` against
+  `request_metadata.csv`). An answer key named like a run setting
+  (`temperature`, `seed`, `backend`, …) would instead have hidden the setting.
+- One fixed, documented prefix makes clashes impossible and shows at a glance
+  which columns the model wrote. Prefixing only clashing keys would have
+  kept old column names but made the rule depend on the answer.
+- `file_id` and `file_uri` differ between backends and machines for the same
+  song; the checksum identifies the exact audio everywhere.
+
+**Unchanged.** `raw_response_json` keeps the answer exactly as returned; key
+names are never respelled; `schema_keys` still compares the model's own key
+names.
+
+**Existing tables** are not rebuilt yet. Until they are, match on `file_uri`
+(as decided in audio-manip-mer on 2026-10-04), not `file_id`.
+
 ## 2026-11-24 — Closed (API) models run at their vendor's default decoding settings
 
 **Status:** agreed, not yet in the code.

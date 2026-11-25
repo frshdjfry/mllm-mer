@@ -121,8 +121,8 @@ Each parsed result row records `submitted_at`, `temperature`, `top_p`, `seed` an
 `prompt_text_hash` (SHA-256 of the rendered prompt text from the prompt
 spec, as 64 hex characters; any edit to the prompt changes it). For text
 experiments it covers the prompt only, not the transcription appended to
-it. If a model answer or prompt variable uses one of these names, the
-model's value is kept and the run setting is left out of that column.
+it. Model answers cannot clash with these columns (see `answer_` below), and
+prompt variables may not use their names.
 
 Every row also has the same provenance columns for both backends, so
 Gemini and Music Flamingo results can be compared in one table:
@@ -144,8 +144,10 @@ was never sent to Gemini, `not_set` for a seed that was never sent, and
 `schema_keys` says whether the answer used the prompt's `response_schema`
 field names. Gemini is forced to use them; Music Flamingo is only asked to,
 and may write e.g. `"joyful activation"` for `joyful_activation`. Keys are
-never renamed: prevent such answers in the prompt (one spelling per field
-name), and check every row that is not `exact` before analysis.
+never respelled (only prefixed with `answer_`): prevent such answers in the
+prompt (one spelling per field name), and check every row that is not
+`exact` before analysis. `schema_keys` compares the model's own key names,
+without the prefix.
 
 | `schema_keys` | Meaning |
 |---|---|
@@ -153,6 +155,57 @@ name), and check every row that is not `exact` before analysis.
 | `missing: …` | schema fields not answered (also when the answer could not be parsed) |
 | `extra: …` | keys not in the schema, kept as returned |
 | `not_checked` | no saved schema, or the answer is not a JSON object |
+
+### Results table columns (data dictionary)
+
+What each column of `results/parsed_long.csv` holds and where it comes from.
+One row per request: one song × one prompt instance × one trial.
+
+**What we sent to the model.** The model hears the audio and reads the
+prompt text; it never sees file names, paths or ids.
+
+| Column | Meaning |
+|---|---|
+| `file_uri` | Where the audio was read from: a `gs://` address (Gemini), or the full local path on the machine that ran the job (Qwen, Music Flamingo). |
+| `model` | The model requested. |
+| prompt variables, e.g. `item` | The value put into the prompt template for this request (templated prompts only). |
+| `temperature`, `top_p`, `seed` | Decoding settings, or a marker saying none was sent (see above). |
+
+The prompt text itself is not a column: `prompt_instance_id` and
+`prompt_text_hash` identify it in `prompt_instances.json`.
+
+**Identifiers (ours; never sent to the model).**
+
+| Column | Meaning |
+|---|---|
+| `experiment_id` | One submitted run. |
+| `dataset_id` | The audio folder or bucket the songs came from. |
+| `file_id` | The song's id within the dataset: the file name without extension (local datasets) or the name in the bucket (Gemini). It can differ between backends for the same song. |
+| `audio_sha256` | SHA-256 checksum of the audio file's bytes, from `input_manifest.json`. The same audio has the same checksum on every backend and machine, so use it to join results across backends. `not_recorded` where the manifest has none (Cloud Storage datasets so far). |
+| `prompt_id`, `prompt_instance_id` | The prompt spec, and the expanded prompt (one per combination of variable values). |
+| `trial_index` | Repeat number of the same request (0, 1, …). |
+| `job_id` | Backend job that ran the request. |
+| `submitted_at`, `created_at` | When the run was submitted; when this table was built. |
+| `prompt_text_hash` | SHA-256 of the rendered prompt text. |
+
+**Run provenance (facts we record about the run):** `backend`,
+`model_served`, `settings_source`, `code_commit`, `hardware` (table above).
+
+**From the model.**
+
+| Column | Meaning |
+|---|---|
+| `raw_response_json` | The model's answer exactly as returned (the parsed JSON, or the whole response if it could not be read as JSON). |
+| `answer_<key>` | One column per key in the answer, e.g. `answer_wonder`. The prefix marks every column the model wrote, so an answer can never overwrite one of ours: a model's `"file_id"` goes to `answer_file_id`. Values are as returned; key names are never respelled. |
+| `answer_candidates` | Present when the answer was not valid JSON: the unparsed response. |
+| `answer_value` | The answer, when it was valid JSON but not an object (e.g. a bare list). |
+| `schema_keys` | Our check of the answer's key names against the prompt's `response_schema` (table above). |
+
+Tables built before 2026-11-25 have no `answer_` prefix and no
+`audio_sha256`, and an answer key could overwrite a column of the same name:
+in Gemini runs whose prompt asked for `"file_id"`, the `file_id` column holds
+the model's guess. `rebuild-results` (below) rebuilds them from the saved raw
+output.
 
 The registry gains `temperature` and `base_seed` columns. An older registry
 is upgraded on the first submit with this version; after that, older

@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from parser import ANSWER_PREFIX, RESERVED_COLUMNS
 from schemas import PromptInstance, PromptSpec
 
 _VARIABLE_PATTERN = re.compile(r"{{\s*([a-zA-Z0-9_]+)\s*}}")
@@ -105,6 +106,11 @@ def validate_template_variables(prompt_text: str, variables: dict[str, list[str]
         raise ValueError(f"Prompt template references undeclared variables: {sorted(missing)}")
     if extra:
         raise ValueError(f"Prompt spec declares unused variables: {sorted(extra)}")
+    # Each variable becomes a results column; it must not replace one of ours
+    # or look like a column from the model's answer.
+    clashing = sorted(name for name in declared if name in RESERVED_COLUMNS or name.startswith(ANSWER_PREFIX))
+    if clashing:
+        raise ValueError(f"Prompt variable names clash with results columns: {clashing}. Rename them.")
 
 
 def slugify(value: str) -> str:

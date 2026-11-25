@@ -47,7 +47,7 @@ METADATA_COLUMNS = [
     "prompt_text_hash", "top_p",
 ]
 RESULT_BASE_COLUMNS = [
-    "experiment_id", "dataset_id", "file_id", "file_uri", "model", "prompt_id", "prompt_instance_id",
+    "experiment_id", "dataset_id", "file_id", "file_uri", "audio_sha256", "model", "prompt_id", "prompt_instance_id",
     "trial_index", "raw_response_json", "job_id", "created_at", "submitted_at", "temperature", "top_p", "seed",
     "prompt_text_hash", "backend", "model_served", "settings_source", "code_commit", "hardware", "schema_keys",
 ]
@@ -160,15 +160,46 @@ class FormatTest(unittest.TestCase):
         with mock.patch.object(result_parser, "utc_now_iso", return_value=FIXED_TIME):
             rows = result_parser.parse_output_jsonl_text(output, job_id="job-1", request_metadata_index=index,
                                                          submitted_at=FIXED_TIME, run_columns=FLAMINGO_RUN_COLUMNS,
-                                                         schema_fields={"golden_simple_v1__base": ["joy", "sadness"]})
+                                                         schema_fields={"golden_simple_v1__base": ["joy", "sadness"]},
+                                                         audio_sha256={"3f9a1c7e5b2d8046": "a" * 64})
         result_parser.save_parsed_results_csv(rows, self.tmp / "parsed.csv")
         check_golden(self, "simple_parsed_results.csv", (self.tmp / "parsed.csv").read_text())
         self.assertEqual(header(self.tmp / "parsed.csv")[: len(RESULT_BASE_COLUMNS)], RESULT_BASE_COLUMNS)
         first = rows[0]
-        self.assertEqual((first["joy"], first["file_id"]), ("71.5", "3f9a1c7e5b2d8046"))
+        self.assertEqual((first["answer_joy"], first["file_id"]), ("71.5", "3f9a1c7e5b2d8046"))
         self.assertEqual([r["schema_keys"] for r in rows],
                          ["missing: sadness; extra: Sadness", *["missing: joy, sadness; extra: candidates"] * 2, "exact"])
-        self.assertEqual(first["Sadness"], "4")  # kept under the model's own key, never renamed
+        self.assertEqual(first["answer_Sadness"], "4")  # the model's own key, only prefixed, never respelled
+        self.assertEqual([r["audio_sha256"] for r in rows], ["a" * 64] * 2 + ["not_recorded"] * 2)
+
+    def test_answer_keys_never_overwrite_our_columns(self) -> None:
+        """Regression: a Gemini answer's "file_id" used to replace the real file_id,
+        and an answer's "temperature" used to hide the recorded setting."""
+        requests = self.build(SIMPLE_PROMPT, "simple")
+        save_request_metadata_csv(requests, self.tmp / "request_metadata.csv")
+        answer = {"file_id": "Tarzan Boy Hook Clip", "temperature": "very warm", "backend": "x",
+                  "schema_keys": "y", "joy": 50, "sadness": 5}
+        output = json.dumps(music_flamingo.output_line(requests[0].request_id, json.dumps(answer))) + "\n"
+        index = result_parser.load_request_metadata_index(self.tmp / "request_metadata.csv")
+        (row,) = result_parser.parse_output_jsonl_text(output, job_id="j", request_metadata_index=index,
+                                                       run_columns=FLAMINGO_RUN_COLUMNS,
+                                                       schema_fields={"golden_simple_v1__base": ["joy", "sadness"]})
+        # Our columns keep our values ...
+        self.assertEqual((row["file_id"], row["temperature"], row["backend"]),
+                         ("3f9a1c7e5b2d8046", "1.0", "music-flamingo"))
+        self.assertEqual(row["schema_keys"], "extra: file_id, temperature, backend, schema_keys")
+        # ... every answer key is kept, under answer_<its own name>, value as returned ...
+        self.assertEqual({k: v for k, v in row.items() if k.startswith("answer_")},
+                         {"answer_" + k: str(v) for k, v in answer.items()})
+        # ... and the raw answer is untouched.
+        self.assertEqual(json.loads(row["raw_response_json"]), answer)
+
+    def test_prompt_variables_cannot_take_results_column_names(self) -> None:
+        from prompts import validate_template_variables
+        for name in ("temperature", "file_id", "answer_joy"):
+            with self.assertRaisesRegex(ValueError, "clash with results columns"):
+                validate_template_variables("Rate {{%s}}" % name, {name: ["joy"]})
+        validate_template_variables("Rate {{item}}", {"item": ["joy"]})
 
     def test_schema_keys_flag_but_never_rename(self) -> None:
         schema = ["joyful_activation", "sadness"]
@@ -203,10 +234,14 @@ class FormatTest(unittest.TestCase):
         )
         self.assertEqual(len(rows), 3)
         by_uri = {Path(r["file_uri"]).stem: r for r in rows}
-        self.assertEqual((by_uri["a606d6d5e11290be"]["mood"], by_uri["a606d6d5e11290be"]["energy"]), ("25.5", "96.0"))
-        # Pre-change metadata: run settings blank, model's own file_id kept as returned.
-        self.assertEqual(by_uri["a606d6d5e11290be"]["temperature"], "")
-        self.assertEqual(by_uri["a606d6d5e11290be"]["file_id"], "audio_file")
+        row = by_uri["a606d6d5e11290be"]
+        self.assertEqual((row["answer_mood"], row["answer_energy"]), ("25.5", "96.0"))
+        # Pre-change metadata: run settings blank. The prompt asked for a
+        # file_id; the model's guess is kept as answer_file_id and the real
+        # file_id stays in place (it used to be overwritten).
+        self.assertEqual(row["temperature"], "")
+        self.assertEqual((row["file_id"], row["answer_file_id"]), ("a606d6d5e11290be", "audio_file"))
+        self.assertEqual(row["audio_sha256"], "not_recorded")
 
     def test_old_gemini_rows_get_explicit_markers_and_served_version(self) -> None:
         index = result_parser.load_request_metadata_index(FIXTURES / "gemini_request_metadata_v1.csv")

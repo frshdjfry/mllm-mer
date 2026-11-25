@@ -15,6 +15,20 @@ RUN_PROVENANCE_FIELDS = ["backend", "model_served", "settings_source", "code_com
 NOT_RECORDED = "not_recorded"
 # Says whether the answer used the prompt's response_schema field names (see check_schema_keys).
 SCHEMA_KEYS_FIELD = "schema_keys"
+# Every column written from the model's answer starts with this, so an answer
+# can never overwrite one of our columns (the model's "file_id" goes to
+# answer_file_id), and every column the model wrote is marked as such.
+ANSWER_PREFIX = "answer_"
+# SHA-256 of the audio file, from input_manifest.json: identifies the same
+# audio across backends and machines, where file_id and file_uri differ.
+AUDIO_SHA256_FIELD = "audio_sha256"
+ID_FIELDS = [
+    "experiment_id", "dataset_id", "file_id", "file_uri", AUDIO_SHA256_FIELD, "model", "prompt_id",
+    "prompt_instance_id", "trial_index", "raw_response_json", "job_id", "created_at",
+]
+# Columns this code writes itself. Prompt variable names must not use these
+# names or the answer_ prefix (checked in prompts.py).
+RESERVED_COLUMNS = [*ID_FIELDS, *RUN_SETTING_FIELDS, *RUN_PROVENANCE_FIELDS, SCHEMA_KEYS_FIELD, "_response_key"]
 
 
 def parse_output_jsonl_text(
@@ -24,8 +38,10 @@ def parse_output_jsonl_text(
     submitted_at: str = "",
     run_columns: dict[str, str] | None = None,
     schema_fields: dict[str, list[str]] | None = None,
+    audio_sha256: dict[str, str] | None = None,
 ) -> list[dict[str, str]]:
-    """schema_fields maps prompt_instance_id to its response_schema field names."""
+    """schema_fields maps prompt_instance_id to its response_schema field names;
+    audio_sha256 maps file_id to the audio file's SHA-256 (see load_audio_sha256)."""
     rows: list[dict[str, str]] = []
     created_at = utc_now_iso()
 
@@ -63,12 +79,29 @@ def parse_output_jsonl_text(
 
         for row in new_rows:
             row.setdefault(SCHEMA_KEYS_FIELD, "not_checked")  # answer was not a JSON object
+            row[AUDIO_SHA256_FIELD] = (audio_sha256 or {}).get(row["file_id"]) or NOT_RECORDED
             add_run_settings(row, metadata_rows, submitted_at)
             if run_columns is not None:
                 add_run_provenance(row, payload, run_columns)
         rows.extend(new_rows)
 
     return rows
+
+
+def load_audio_sha256(manifest_path: Path) -> dict[str, str]:
+    """file_id -> SHA-256 of the audio, from an experiment's input_manifest.json.
+
+    Local datasets record it; Cloud Storage datasets so far do not, so their
+    rows say not_recorded.
+    """
+    if not manifest_path.is_file():
+        return {}
+    records = json.loads(manifest_path.read_text(encoding="utf-8")).get("records", [])
+    return {
+        record["file_id"]: record["attributes"]["sha256"]
+        for record in records
+        if (record.get("attributes") or {}).get("sha256")
+    }
 
 
 def add_run_provenance(row: dict[str, str], payload: dict[str, Any], run_columns: dict[str, str]) -> None:
@@ -101,8 +134,8 @@ def add_run_settings(
         "seed": first.seed if first else "",
         "prompt_text_hash": first.prompt_text_hash if first else "",
     }
-    # Never overwrite a same-named key from the model's answer or a prompt
-    # variable; model output is stored exactly as returned.
+    # Never overwrite a same-named prompt variable (prompts.py rejects those
+    # names; old prompt specs may still have them).
     for key, value in settings.items():
         row.setdefault(key, value)
 
@@ -118,17 +151,7 @@ def save_parsed_results_csv(rows: list[dict[str, str]], path: Path) -> None:
 
 def collect_fieldnames(rows: list[dict[str, str]]) -> list[str]:
     base_fields = [
-        "experiment_id",
-        "dataset_id",
-        "file_id",
-        "file_uri",
-        "model",
-        "prompt_id",
-        "prompt_instance_id",
-        "trial_index",
-        "raw_response_json",
-        "job_id",
-        "created_at",
+        *ID_FIELDS,
         *RUN_SETTING_FIELDS,
         *RUN_PROVENANCE_FIELDS,
         SCHEMA_KEYS_FIELD,
@@ -263,7 +286,7 @@ def build_result_rows(
                 "prompt_instance_id": "",
                 "trial_index": "0",
                 "_response_key": response_key,
-                "value": stringify_value(response_value),
+                "answer_value": stringify_value(response_value),
                 "raw_response_json": raw_response_json,
                 "job_id": job_id,
                 "created_at": created_at,
@@ -281,7 +304,7 @@ def build_result_rows(
             "prompt_id": metadata_row.prompt_id,
             "prompt_instance_id": metadata_row.prompt_instance_id,
             "trial_index": str(metadata_row.trial_index),
-            "value": stringify_value(response_value),
+            "answer_value": stringify_value(response_value),
             "raw_response_json": raw_response_json,
             "job_id": job_id,
             "created_at": created_at,
@@ -339,7 +362,10 @@ def build_structured_result_row(
 
     row[SCHEMA_KEYS_FIELD] = check_schema_keys(response_json, schema_fields)
     for key, value in response_json.items():
-        row[key] = stringify_value(value)
+        column = ANSWER_PREFIX + key
+        if column in row:  # only possible if a prompt variable is named answer_...
+            raise ValueError(f"Answer key {key!r} would overwrite column {column!r}.")
+        row[column] = stringify_value(value)
     return row
 
 
